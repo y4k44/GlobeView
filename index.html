@@ -52,6 +52,13 @@ header{
   transition:all .5s;
 }
 body.advanced header{border-bottom-color:rgba(0,240,255,.25);box-shadow:0 1px 40px rgba(0,240,255,.07);}
+body.journey-active header{
+  opacity:0;
+  pointer-events:none;
+  background:transparent;
+  border-bottom-color:transparent;
+  box-shadow:none;
+}
 .logo{font-family:var(--font-disp);font-size:1.5rem;font-weight:700;letter-spacing:.1em;transition:all .5s;}
 body.advanced .logo{font-size:1.05rem;letter-spacing:.28em;text-transform:uppercase}
 .logo em{color:var(--accent);font-style:normal;transition:color .5s}
@@ -151,7 +158,9 @@ body.advanced .mm-label{color:rgba(0,240,255,.55);text-shadow:0 0 8px rgba(0,240
 }
 body.advanced .legend{background:rgba(2,6,12,.82);border-color:rgba(0,240,255,.18);box-shadow:0 0 16px rgba(0,240,255,.05)}
 body.journey-active #minimap-wrap,
-body.journey-active .legend{
+body.journey-active .legend,
+body.journey-active .search-wrap,
+body.journey-active .ctrl-bar{
   opacity:0;
   pointer-events:none;
   transform:translateY(10px);
@@ -219,12 +228,16 @@ body.advanced #search-inp:focus{box-shadow:0 0 14px rgba(0,240,255,.18)}
 body.advanced #search-res{background:rgba(4,8,16,.98);border-color:rgba(0,240,255,.2)}
 .sr-item{padding:8px 14px;font-size:.7rem;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .12s}
 .sr-item:hover{background:var(--surf2)}
-.ctrl-bar{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.ctrl-bar{
+  position:absolute;top:82px;left:24px;transform:none;z-index:20;
+  display:flex;flex-direction:column;gap:8px;align-items:stretch;
+}
 .cb{
   padding:8px 16px;background:rgba(12,24,40,.88);border:1px solid var(--border);
   color:var(--txt-m);font-family:var(--font-body);font-size:.6rem;
   letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:4px;
   transition:all .2s;backdrop-filter:blur(10px);white-space:nowrap;
+  min-width:136px;text-align:left;
 }
 body.advanced .cb{background:rgba(4,8,16,.88);border-color:rgba(0,240,255,.18);color:rgba(0,240,255,.45)}
 .cb:hover{border-color:var(--accent);color:var(--accent)}
