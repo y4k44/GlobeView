@@ -436,8 +436,8 @@ body.advanced #cb-tutorial:hover{border-color:rgba(0,240,255,.78);color:rgba(0,2
       <button class="cb" id="cb-route-mode">✈ Add Route</button>
       <button class="cb" id="cb-journey">▶ Journey</button>
       <button class="cb" id="cb-tutorial">⦿ Tutorial</button>
-      <button class="cb" id="cb-save-file">💾 Export</button>
-      <button class="cb" id="cb-load-file">📂 Import</button>
+      <button class="cb" id="cb-save-file">↧ Export</button>
+      <button class="cb" id="cb-load-file">↥ Import</button>
       <input type="file" id="file-inp" accept=".wmk,.json" style="display:none">
     </div>
     <div class="legend">
@@ -578,6 +578,11 @@ let _routeLineCache=new Map();   // 'from:to' → {fc,tc,line} — never changes
 let _minimapCountriesCanvas=null; // offscreen cache for static minimap layer
 let _minimapDirty=true;           // rebuild minimap country layer on next draw
 let _lastTooltipCheck=0;          // throttle mousemove geoContains to ~30fps
+// ── Journey connector caches — eliminates per-frame DOM queries & getBoundingClientRect reflows ──
+let _jsvgDot=null,_jsvgRipple=null,_jsvgLines=[];
+let _jCardRects=[];        // cached polaroid card bounding rects
+let _jCardRectsDirty=true; // invalidated on new step or window resize
+let _jConnLastUpdate=0;    // throttle connector SVG updates to ~15fps
 const save=()=>{_visitRanksCache=null;_minimapDirty=true;try{localStorage.setItem('wm4',JSON.stringify(S));}catch(e){}};
 const load=()=>{try{const d=localStorage.getItem('wm4');if(d)S=JSON.parse(d);}catch(e){}};
 load();
@@ -959,6 +964,8 @@ function createConnectorPaths(count){
   dot.id='jc-globe-dot';dot.setAttribute('r','5');dot.setAttribute('fill',dotColor);
   dot.setAttribute('opacity','0.9');dot.setAttribute('filter','url(#jsvg-dot-glow)');dot.style.display='none';
   svg.appendChild(dot);
+  // ── Cache element references so updateJourneyConnectors never queries the DOM ──
+  _jsvgDot=dot;_jsvgRipple=ripple;_jsvgLines=[];
   for(let i=0;i<count;i++){
     const path=document.createElementNS('http://www.w3.org/2000/svg','path');
     path.classList.add('jc-photo-line');path.setAttribute('fill','none');
@@ -969,7 +976,7 @@ function createConnectorPaths(count){
       path.setAttribute('stroke-dasharray','6 5');
       // animation and filter come from the CSS class .jc-photo-line
     }else{
-      // EDIT 2: Pic → next pic: solid red string, no animation
+      // Pic → next pic: solid red string, no animation
       path.setAttribute('stroke','rgba(210,35,35,0.88)');
       path.setAttribute('stroke-width','2');
       path.removeAttribute('stroke-dasharray');
@@ -978,49 +985,61 @@ function createConnectorPaths(count){
     }
     path.style.animationDelay=(i*0.22)+'s';
     path.style.display='none';svg.appendChild(path);
+    _jsvgLines.push(path);
   }
+  // Cards not yet in DOM — mark rects dirty so they're read after reveal
+  _jCardRects=[];_jCardRectsDirty=true;
 }
 
 function updateJourneyConnectors(){
-  const svg=document.getElementById('journey-svg');if(!svg)return;
-  const dot=document.getElementById('jc-globe-dot');
-  const ripple=document.getElementById('jc-globe-ripple');
-  const lines=svg.querySelectorAll('.jc-photo-line');
   if(!journeyActive||!journeyList[journeyIdx]){
-    if(dot)dot.style.display='none';if(ripple)ripple.style.display='none';
-    lines.forEach(l=>l.style.display='none');return;
+    if(_jsvgDot)_jsvgDot.style.display='none';
+    if(_jsvgRipple)_jsvgRipple.style.display='none';
+    _jsvgLines.forEach(l=>l.style.display='none');
+    return;
   }
+  // ── Throttle to ~15fps — SVG overlay lines don't need 60fps ──
+  const _tnow=performance.now();
+  if(_tnow-_jConnLastUpdate<66)return;
+  _jConnLastUpdate=_tnow;
+
   const entry=journeyList[journeyIdx];
   const cen=centroid(entry.id);if(!cen)return;
   const visible=d3.geoDistance(cen,[-rot[0],-rot[1]])<Math.PI/2*0.96;
   if(!visible){
-    if(dot)dot.style.display='none';if(ripple)ripple.style.display='none';
-    lines.forEach(l=>l.style.display='none');return;
+    if(_jsvgDot)_jsvgDot.style.display='none';
+    if(_jsvgRipple)_jsvgRipple.style.display='none';
+    _jsvgLines.forEach(l=>l.style.display='none');
+    return;
   }
   const globePos=proj(cen);if(!globePos)return;
   const canvasRect=gc.getBoundingClientRect();
   const gsx=canvasRect.left+globePos[0];
   const gsy=canvasRect.top+globePos[1];
-  if(dot){dot.setAttribute('cx',gsx);dot.setAttribute('cy',gsy);dot.style.display='';}
-  if(ripple){ripple.setAttribute('cx',gsx);ripple.setAttribute('cy',gsy);ripple.style.display='';}
-  const cards=document.querySelectorAll('.jp-polaroid');
-  lines.forEach((line,i)=>{
-    const card=cards[i];
-    if(!card){line.style.display='none';return;}
-    const rect=card.getBoundingClientRect();
-    if(rect.width===0){line.style.display='none';return;}
-    const tx=rect.left+2;
-    const ty=rect.top+rect.height*0.38;
+  if(_jsvgDot){_jsvgDot.setAttribute('cx',gsx);_jsvgDot.setAttribute('cy',gsy);_jsvgDot.style.display='';}
+  if(_jsvgRipple){_jsvgRipple.setAttribute('cx',gsx);_jsvgRipple.setAttribute('cy',gsy);_jsvgRipple.style.display='';}
+
+  // ── Refresh card rects only when dirty (new step or resize) ──
+  if(_jCardRectsDirty||_jCardRects.length===0){
+    const cards=document.querySelectorAll('.jp-polaroid');
+    if(cards.length>0){
+      _jCardRects=Array.from(cards).map(c=>c.getBoundingClientRect());
+      _jCardRectsDirty=false;
+    }
+  }
+
+  _jsvgLines.forEach((line,i)=>{
+    const rect=_jCardRects[i];
+    if(!rect||rect.width===0){line.style.display='none';return;}
+    const tx=rect.left+2,ty=rect.top+rect.height*0.38;
     let sx,sy;
     if(i===0){
-      // EDIT 1: Globe → pic 1 line only appears after the globe finishes flying
+      // Globe → pic 1 line only appears after the globe finishes flying
       if(journeyFlying){line.style.display='none';return;}
       sx=gsx;sy=gsy;
     }else{
-      const prevCard=cards[i-1];
-      if(!prevCard){line.style.display='none';return;}
-      const prevRect=prevCard.getBoundingClientRect();
-      if(prevRect.width===0){line.style.display='none';return;}
+      const prevRect=_jCardRects[i-1];
+      if(!prevRect||prevRect.width===0){line.style.display='none';return;}
       sx=prevRect.right-2;
       sy=prevRect.top+prevRect.height*0.38;
     }
@@ -1067,6 +1086,8 @@ function endJourney(){
   document.getElementById('journey-controls-bar').classList.remove('vis','anim');
   const svg=document.getElementById('journey-svg');
   svg.querySelectorAll('.jc-photo-line,#jc-globe-dot,#jc-globe-ripple').forEach(el=>el.remove());
+  // Clear cached SVG element refs
+  _jsvgDot=null;_jsvgRipple=null;_jsvgLines=[];_jCardRects=[];_jCardRectsDirty=true;
   hlId=selId;
 }
 
@@ -1121,6 +1142,10 @@ function journeyGo(idx){
       },i*160);
       photoRevealTimeouts.push(t);
     });
+    // Once all cards are in the DOM and their reveal animation has started,
+    // cache their bounding rects in one batch (avoids per-frame reflows)
+    const finalDelay=photos.length*160+400;
+    photoRevealTimeouts.push(setTimeout(()=>{_jCardRectsDirty=true;},finalDelay));
   }else{
     const ph=document.createElement('div');ph.className='jp-no-photos-msg';ph.textContent='No photos for this visit';strip.appendChild(ph);
     createConnectorPaths(0);
@@ -1443,7 +1468,7 @@ document.getElementById('file-inp').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
-window.addEventListener('resize',()=>{sizeCanvas();journeyGlobeShift=0;updateProjectionLayout(true);initStars();syncZoomBar();if(tutActive)tutPlace();});
+window.addEventListener('resize',()=>{sizeCanvas();journeyGlobeShift=0;updateProjectionLayout(true);initStars();syncZoomBar();if(tutActive)tutPlace();_jCardRectsDirty=true;});
 initStars();
 loadWorld();
 </script>
