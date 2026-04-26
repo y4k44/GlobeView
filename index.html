@@ -566,7 +566,16 @@ const getAlpha=id=>CD[id]?.a||'';
 const getFlag=a2=>{if(!a2)return'🌍';return a2.toUpperCase().split('').map(c=>String.fromCodePoint(0x1F1E6-65+c.charCodeAt(0))).join('');};
 const getCFlag=id=>getFlag(getAlpha(id));
 let S={visited:{},homes:{},routes:[]};
-const save=()=>{try{localStorage.setItem('wm4',JSON.stringify(S));}catch(e){}};
+// ── Performance caches ────────────────────────────────────────────────────────
+let centroidMap=new Map();       // id → [lon,lat], built once after world loads
+let _visitRanksCache=null;       // invalidated on save()
+let _explorerColCache={};        // id → {fill,fillSel,stroke,strokeSel,glowStroke,glowShadow}
+let _neonColCache={};            // id → precomputed neon strings
+let _routeLineCache=new Map();   // 'from:to' → {fc,tc,line} — never changes
+let _minimapCountriesCanvas=null; // offscreen cache for static minimap layer
+let _minimapDirty=true;           // rebuild minimap country layer on next draw
+let _lastTooltipCheck=0;          // throttle mousemove geoContains to ~30fps
+const save=()=>{_visitRanksCache=null;_minimapDirty=true;try{localStorage.setItem('wm4',JSON.stringify(S));}catch(e){}};
 const load=()=>{try{const d=localStorage.getItem('wm4');if(d)S=JSON.parse(d);}catch(e){}};
 load();
 let currentMode=localStorage.getItem('wm4-mode')||'explorer';
@@ -609,24 +618,260 @@ const particles=[];
 let lastParticleSpawn=0;
 function spawnParticles(){if(currentMode!=='advanced')return;if(S.routes.length===0)return;const ts=performance.now();if(ts-lastParticleSpawn<300)return;lastParticleSpawn=ts;const rt=S.routes[Math.floor(Math.random()*S.routes.length)];const fc=centroid(rt.from),tc=centroid(rt.to);if(!fc||!tc)return;particles.push({from:fc,to:tc,t:0,speed:0.003+Math.random()*0.003,color:Math.random()<0.5?'#00F0FF':'#FF00CC',size:1.5+Math.random()*1.5,trail:[]});}
 function updateParticles(){for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.trail.push(p.t);if(p.trail.length>8)p.trail.shift();p.t+=p.speed;if(p.t>1)particles.splice(i,1);}}
-function drawParticles(){particles.forEach(p=>{const route=d3.range(61).map(i=>d3.geoInterpolate(p.from,p.to)(i/60));const idx=Math.min(60,Math.floor(p.t*60));const pt=route[idx];if(!pt)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;const pos=proj(pt);if(!pos)return;p.trail.forEach((ti,i)=>{const tidx=Math.min(60,Math.floor(ti*60));const tpt=route[tidx];if(!tpt)return;if(d3.geoDistance(tpt,[-rot[0],-rot[1]])>Math.PI/2)return;const tpos=proj(tpt);if(!tpos)return;const alpha=(i/p.trail.length)*0.5;gx.save();gx.shadowColor=p.color;gx.shadowBlur=4;gx.beginPath();gx.arc(tpos[0],tpos[1],p.size*0.6,0,Math.PI*2);gx.fillStyle=hexToRgba(p.color,alpha);gx.fill();gx.restore();});gx.save();gx.shadowColor=p.color;gx.shadowBlur=12;gx.beginPath();gx.arc(pos[0],pos[1],p.size,0,Math.PI*2);gx.fillStyle=p.color;gx.fill();gx.restore();});}
+function drawParticles(){particles.forEach(p=>{if(!p.route)p.route=d3.range(61).map(i=>d3.geoInterpolate(p.from,p.to)(i/60));const route=p.route;const idx=Math.min(60,Math.floor(p.t*60));const pt=route[idx];if(!pt)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;const pos=proj(pt);if(!pos)return;p.trail.forEach((ti,i)=>{const tidx=Math.min(60,Math.floor(ti*60));const tpt=route[tidx];if(!tpt)return;if(d3.geoDistance(tpt,[-rot[0],-rot[1]])>Math.PI/2)return;const tpos=proj(tpt);if(!tpos)return;const alpha=(i/p.trail.length)*0.5;gx.save();gx.shadowColor=p.color;gx.shadowBlur=4;gx.beginPath();gx.arc(tpos[0],tpos[1],p.size*0.6,0,Math.PI*2);gx.fillStyle=hexToRgba(p.color,alpha);gx.fill();gx.restore();});gx.save();gx.shadowColor=p.color;gx.shadowBlur=12;gx.beginPath();gx.arc(pos[0],pos[1],p.size,0,Math.PI*2);gx.fillStyle=p.color;gx.fill();gx.restore();});}
 function hexToRgba(hex,a){const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);return`rgba(${r},${g},${b},${a})`;}
-async function loadWorld(){try{const topo=await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json');const world=topojson.feature(topo,topo.objects.countries);countries=world.features;setupSearch([...countries].sort((a,b)=>getName(a.id).localeCompare(getName(b.id))));updateStats();startRender();}catch(e){toast('⚠ Could not load map.');console.error(e);}}
+async function loadWorld(){try{const topo=await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json');const world=topojson.feature(topo,topo.objects.countries);countries=world.features;
+// build O(1) centroid map once
+countries.forEach(c=>{centroidMap.set(+c.id,d3.geoCentroid(c));});
+// precompute all colour strings once (fixes per-frame hex parsing)
+buildColCaches();
+setupSearch([...countries].sort((a,b)=>getName(a.id).localeCompare(getName(b.id))));updateStats();startRender();}catch(e){toast('⚠ Could not load map.');console.error(e);}}
 const now=()=>performance.now();
 let lastT=0;
 function draw(){gx.clearRect(0,0,GW,GH);gx.save();gx.beginPath();gx.arc(CX,CY,scl+1,0,Math.PI*2);gx.clip();if(currentMode==='advanced')drawAdvanced();else drawExplorer();gx.restore();drawMinimap();}
-function drawMinimap(){if(!countries.length)return;const adv=currentMode==='advanced';miniCtx.clearRect(0,0,MINI_W,MINI_H);miniCtx.fillStyle=adv?'#020508':'#061428';miniCtx.fillRect(0,0,MINI_W,MINI_H);countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id];miniCtx.beginPath();miniPath(c);if(hom)miniCtx.fillStyle=adv?'rgba(255,0,200,.55)':'#7a5018';else if(vis)miniCtx.fillStyle=adv?'rgba(0,200,255,.45)':'#3a5e24';else miniCtx.fillStyle=adv?'rgba(0,25,40,.8)':'#192c16';miniCtx.fill();miniCtx.strokeStyle=adv?'rgba(0,200,255,.2)':'rgba(30,55,26,.9)';miniCtx.lineWidth=.3;miniCtx.stroke();});if(showRts){S.routes.forEach(rt=>{const fc=centroid(rt.from),tc=centroid(rt.to);if(!fc||!tc)return;const pts=d3.range(31).map(i=>d3.geoInterpolate(fc,tc)(i/30));const line={type:'LineString',coordinates:pts};miniCtx.save();miniCtx.beginPath();miniPath(line);miniCtx.strokeStyle=adv?'rgba(255,80,200,.5)':'rgba(212,114,48,.55)';miniCtx.lineWidth=.8;miniCtx.stroke();miniCtx.restore();});}if(adv)try{const visCircle=d3.geoCircle().center([-rot[0],-rot[1]]).radius(89.9)();miniCtx.save();miniCtx.beginPath();miniCtx.rect(0,0,MINI_W,MINI_H);miniPath(visCircle);miniCtx.fillStyle='rgba(0,0,0,.42)';miniCtx.fill('evenodd');miniCtx.restore();miniCtx.save();miniCtx.beginPath();miniPath(visCircle);miniCtx.strokeStyle='rgba(0,240,255,.55)';miniCtx.lineWidth=.8;miniCtx.shadowColor='rgba(0,240,255,.6)';miniCtx.shadowBlur=4;miniCtx.stroke();miniCtx.restore();}catch(e){}const vc=miniProj([-rot[0],-rot[1]]);if(vc){const[vx,vy]=vc;miniCtx.save();const grd=miniCtx.createRadialGradient(vx,vy,0,vx,vy,14);grd.addColorStop(0,adv?'rgba(0,240,255,.25)':'rgba(196,146,42,.22)');grd.addColorStop(1,'transparent');miniCtx.beginPath();miniCtx.arc(vx,vy,14,0,Math.PI*2);miniCtx.fillStyle=grd;miniCtx.fill();miniCtx.strokeStyle=adv?'rgba(0,240,255,.7)':'rgba(196,146,42,.7)';miniCtx.lineWidth=.7;miniCtx.beginPath();miniCtx.moveTo(vx-7,vy);miniCtx.lineTo(vx+7,vy);miniCtx.stroke();miniCtx.beginPath();miniCtx.moveTo(vx,vy-7);miniCtx.lineTo(vx,vy+7);miniCtx.stroke();if(adv){miniCtx.shadowColor='#00F0FF';miniCtx.shadowBlur=8;}miniCtx.beginPath();miniCtx.arc(vx,vy,2.8,0,Math.PI*2);miniCtx.fillStyle=adv?'#00F0FF':'#c4922a';miniCtx.fill();miniCtx.restore();}miniCtx.strokeStyle=adv?'rgba(0,240,255,.3)':'rgba(26,48,80,.8)';miniCtx.lineWidth=.8;miniCtx.strokeRect(.5,.5,MINI_W-1,MINI_H-1);}
+function drawMinimap(){if(!countries.length)return;const adv=currentMode==='advanced';
+// Rebuild static country+route layer only when data or mode changes
+if(_minimapDirty||!_minimapCountriesCanvas){
+  if(!_minimapCountriesCanvas){_minimapCountriesCanvas=document.createElement('canvas');_minimapCountriesCanvas.width=MINI_W;_minimapCountriesCanvas.height=MINI_H;}
+  const mctx=_minimapCountriesCanvas.getContext('2d');
+  mctx.clearRect(0,0,MINI_W,MINI_H);
+  mctx.fillStyle=adv?'#020508':'#061428';mctx.fillRect(0,0,MINI_W,MINI_H);
+  countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id];mctx.beginPath();miniPath(c);if(hom)mctx.fillStyle=adv?'rgba(255,0,200,.55)':'#7a5018';else if(vis)mctx.fillStyle=adv?'rgba(0,200,255,.45)':'#3a5e24';else mctx.fillStyle=adv?'rgba(0,25,40,.8)':'#192c16';mctx.fill();mctx.strokeStyle=adv?'rgba(0,200,255,.2)':'rgba(30,55,26,.9)';mctx.lineWidth=.3;mctx.stroke();});
+  if(showRts){S.routes.forEach(rt=>{const cached=getRouteLine(rt.from,rt.to);if(!cached)return;mctx.save();mctx.beginPath();miniPath(cached.line);mctx.strokeStyle=adv?'rgba(255,80,200,.5)':'rgba(212,114,48,.55)';mctx.lineWidth=.8;mctx.stroke();mctx.restore();});}
+  _minimapDirty=false;
+}
+// Blit static layer, then draw dynamic view indicator on top
+miniCtx.clearRect(0,0,MINI_W,MINI_H);
+miniCtx.drawImage(_minimapCountriesCanvas,0,0);
+if(adv)try{const visCircle=d3.geoCircle().center([-rot[0],-rot[1]]).radius(89.9)();miniCtx.save();miniCtx.beginPath();miniCtx.rect(0,0,MINI_W,MINI_H);miniPath(visCircle);miniCtx.fillStyle='rgba(0,0,0,.42)';miniCtx.fill('evenodd');miniCtx.restore();miniCtx.save();miniCtx.beginPath();miniPath(visCircle);miniCtx.strokeStyle='rgba(0,240,255,.55)';miniCtx.lineWidth=.8;miniCtx.shadowColor='rgba(0,240,255,.6)';miniCtx.shadowBlur=4;miniCtx.stroke();miniCtx.restore();}catch(e){}
+const vc=miniProj([-rot[0],-rot[1]]);if(vc){const[vx,vy]=vc;miniCtx.save();const grd=miniCtx.createRadialGradient(vx,vy,0,vx,vy,14);grd.addColorStop(0,adv?'rgba(0,240,255,.25)':'rgba(196,146,42,.22)');grd.addColorStop(1,'transparent');miniCtx.beginPath();miniCtx.arc(vx,vy,14,0,Math.PI*2);miniCtx.fillStyle=grd;miniCtx.fill();miniCtx.strokeStyle=adv?'rgba(0,240,255,.7)':'rgba(196,146,42,.7)';miniCtx.lineWidth=.7;miniCtx.beginPath();miniCtx.moveTo(vx-7,vy);miniCtx.lineTo(vx+7,vy);miniCtx.stroke();miniCtx.beginPath();miniCtx.moveTo(vx,vy-7);miniCtx.lineTo(vx,vy+7);miniCtx.stroke();if(adv){miniCtx.shadowColor='#00F0FF';miniCtx.shadowBlur=8;}miniCtx.beginPath();miniCtx.arc(vx,vy,2.8,0,Math.PI*2);miniCtx.fillStyle=adv?'#00F0FF':'#c4922a';miniCtx.fill();miniCtx.restore();}miniCtx.strokeStyle=adv?'rgba(0,240,255,.3)':'rgba(26,48,80,.8)';miniCtx.lineWidth=.8;miniCtx.strokeRect(.5,.5,MINI_W-1,MINI_H-1);}
 miniCanvas.addEventListener('click',e=>{const rect=miniCanvas.getBoundingClientRect();const sx=miniCanvas.width/rect.width,sy=miniCanvas.height/rect.height;const x=(e.clientX-rect.left)*sx,y=(e.clientY-rect.top)*sy;const coords=miniProj.invert([x,y]);if(coords)flyTo(...coords);});
-function getVisitRanks(){const dated=Object.entries(S.visited).filter(([,d])=>d&&d.date).sort(([,a],[,b])=>a.date.localeCompare(b.date));const ranks={};let rank=0,prevDate=null;dated.forEach(([id,d])=>{if(d.date!==prevDate){rank++;prevDate=d.date;}ranks[+id]=rank;});return ranks;}
+// Fix 3 — cached visit ranks (invalidated on save)
+function getVisitRanks(){if(_visitRanksCache)return _visitRanksCache;const dated=Object.entries(S.visited).filter(([,d])=>d&&d.date).sort(([,a],[,b])=>a.date.localeCompare(b.date));const ranks={};let rank=0,prevDate=null;dated.forEach(([id,d])=>{if(d.date!==prevDate){rank++;prevDate=d.date;}ranks[+id]=rank;});_visitRanksCache=ranks;return ranks;}
+// Fix 4+5 — precompute all per-country colour strings once at load time
+function buildColCaches(){
+  _explorerColCache={};_neonColCache={};
+  const allIds=[...new Set([...Object.keys(COUNTRY_COLORS),...Object.keys(COUNTRY_NEON)])].map(Number);
+  // also include any IDs from the loaded countries for completeness
+  if(countries.length)countries.forEach(c=>{allIds.push(+c.id);});
+  const seen=new Set();
+  allIds.forEach(id=>{
+    if(seen.has(id))return;seen.add(id);
+    // Explorer cache
+    const bc=getCountryColor(id);
+    const bcLight=lightenHex(bc,.22);
+    const bcLight38=lightenHex(bc,.38);
+    const bcLight10=lightenHex(bc,.1);
+    _explorerColCache[id]={
+      fill:bc,fillSel:bcLight,
+      stroke:hexToRgba(bc,.45),strokeSel:hexToRgba(bcLight38,.85),
+      glowShadow:hexToRgba(bcLight10,.4)
+    };
+    // Neon cache — preparse r,g,b so alpha can be applied cheaply each frame
+    const nc=getNeonColor(id);
+    const nr=parseInt(nc.slice(1,3),16),ng=parseInt(nc.slice(3,5),16),nb=parseInt(nc.slice(5,7),16);
+    _neonColCache[id]={hex:nc,r:nr,g:ng,b:nb,stroke75:`rgba(${nr},${ng},${nb},.75)`,scolor:nc};
+  });
+}
+// Fix 7 — geodesic route line cache (never changes, build once per unique pair)
+function getRouteLine(from,to){const key=`${from}:${to}`;let cached=_routeLineCache.get(key);if(cached)return cached;const fc=centroid(from),tc=centroid(to);if(!fc||!tc)return null;const pts=d3.range(61).map(i=>d3.geoInterpolate(fc,tc)(i/60));cached={fc,tc,line:{type:'LineString',coordinates:pts}};_routeLineCache.set(key,cached);return cached;}
 function roundRect(ctx,x,y,w,h,r,fill,doStroke){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();if(fill){ctx.fillStyle=fill;ctx.fill();}if(doStroke)ctx.stroke();}
-function drawCountryIcons(){if(!countries.length)return;const adv=currentMode==='advanced';const ranks=getVisitRanks();countries.forEach(c=>{const id=+c.id;const data=S.visited[id];if(!data)return;const rank=ranks[id];const hasNotes=!!(data.notes&&data.notes.trim());const hasPhotos=!!(data.photos&&data.photos.length>0);if(!rank&&!hasNotes&&!hasPhotos)return;const cen=d3.geoCentroid(c);if(d3.geoDistance(cen,[-rot[0],-rot[1]])>Math.PI/2)return;const pos=proj(cen);if(!pos)return;const hasIcons=hasNotes||hasPhotos;const badgeH=rank?13:0;const iconsH=hasIcons?11:0;const gap=rank&&hasIcons?3:0;const totalH=badgeH+gap+iconsH;let y=pos[1]-totalH/2;if(rank){const num=String(rank);gx.save();gx.font=`bold 7.5px 'Share Tech Mono',monospace`;const tw=gx.measureText(num).width;const bw=Math.max(16,tw+10),bh=12,br=3;const bx=pos[0]-bw/2,by=y;if(adv){gx.shadowColor='rgba(0,240,255,.65)';gx.shadowBlur=9;}else{gx.shadowColor='rgba(196,146,42,.45)';gx.shadowBlur=6;}roundRect(gx,bx,by,bw,bh,br,'rgba(5,10,18,.92)');gx.strokeStyle=adv?'rgba(0,240,255,.72)':'rgba(196,146,42,.68)';gx.lineWidth=0.85;roundRect(gx,bx,by,bw,bh,br,null,true);gx.fillStyle=adv?'#00F0FF':'#d4a030';gx.textAlign='center';gx.textBaseline='middle';gx.fillText(num,pos[0],by+bh/2+0.5);gx.restore();y+=bh+gap;}if(hasIcons){const icons=[];if(hasNotes)icons.push({type:'notes'});if(hasPhotos)icons.push({type:'photos'});const spacing=13;const totalW=(icons.length-1)*spacing;const startX=pos[0]-totalW/2;const iy=y+5;icons.forEach((icon,i)=>{const ix=startX+i*spacing,r=5;if(icon.type==='notes'){const nc=adv?'rgba(255,180,0,.9)':'rgba(196,146,42,.9)';const nglow=adv?'rgba(255,180,0,.7)':'rgba(196,146,42,.55)';gx.save();gx.shadowColor=nglow;gx.shadowBlur=7;gx.beginPath();gx.arc(ix,iy,r,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.82)';gx.fill();gx.beginPath();gx.moveTo(ix,iy-3.2);gx.lineTo(ix+3,iy+2.2);gx.lineTo(ix-3,iy+2.2);gx.closePath();gx.fillStyle=nc;gx.fill();gx.restore();}else{const pc=adv?'rgba(0,200,255,.9)':'rgba(74,176,220,.9)';const pglow=adv?'rgba(0,200,255,.7)':'rgba(74,176,220,.55)';gx.save();gx.shadowColor=pglow;gx.shadowBlur=7;gx.beginPath();gx.arc(ix,iy,r,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.82)';gx.fill();gx.beginPath();gx.arc(ix,iy,3.2,0,Math.PI*2);gx.fillStyle=pc;gx.fill();gx.beginPath();gx.arc(ix,iy,1.3,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.75)';gx.fill();gx.restore();}});}})}
-function drawExplorer(){const t=now();const og=gx.createRadialGradient(CX-scl*.3,CY-scl*.3,scl*.04,CX,CY,scl);og.addColorStop(0,'#0e2848');og.addColorStop(.55,'#081a30');og.addColorStop(1,'#040d1c');gx.beginPath();pathGen(SPHERE);gx.fillStyle=og;gx.fill();if(showGrid){gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(30,70,120,.35)';gx.lineWidth=.3;gx.stroke();}countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id],sel=id===hlId;const fl=animFlash[id];gx.beginPath();pathGen(c);let fill,stroke,sw=.5;if(fl){const p=Math.min(1,(t-fl.start)/700),ease=Math.sin(p*Math.PI);if(hom)fill=lerpColor('#6a4010','#e8c060',ease);else if(vis)fill=lerpColor('#2a4818','#78b040',ease);else fill=lerpColor('#192c16','#4888c0',ease);stroke='rgba(200,220,180,.5)';sw=1.4;if(p>=1)delete animFlash[id];}else if(hom){fill=sel?'#b87820':'#7a5018';stroke=sel?'rgba(210,150,40,.8)':'rgba(160,100,20,.5)';sw=sel?1.4:.5;}else if(vis){fill=sel?'#5a8030':'#3a5e24';stroke=sel?'rgba(120,180,60,.8)':'rgba(80,130,40,.45)';sw=sel?1.4:.5;}else{fill=sel?'#253e20':'#192c16';stroke=sel?'rgba(60,110,50,.7)':'rgba(28,50,24,.7)';sw=sel?1.1:.35;}if(id===routeFrom){stroke='rgba(255,220,80,1)';sw=2;}gx.fillStyle=fill;gx.fill();gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();});countries.forEach(c=>{const id=+c.id;if(!S.visited[id]&&!S.homes[id])return;const isHom=S.homes[id];gx.save();gx.shadowColor=isHom?'rgba(220,160,30,.4)':'rgba(80,160,40,.3)';gx.shadowBlur=14;gx.beginPath();pathGen(c);gx.strokeStyle=isHom?'rgba(200,140,20,.2)':'rgba(80,160,40,.2)';gx.lineWidth=1.5;gx.stroke();gx.restore();});if(showRts)drawRoutesExplorer();if(journeyActive)drawJourneyRoutes();drawCountryIcons();const sun=gx.createRadialGradient(CX-scl*.42,CY-scl*.42,0,CX-scl*.1,CY-scl*.1,scl*.85);sun.addColorStop(0,'rgba(255,250,220,.07)');sun.addColorStop(.5,'rgba(200,210,250,.02)');sun.addColorStop(1,'transparent');gx.beginPath();pathGen(SPHERE);gx.fillStyle=sun;gx.fill();const rim=gx.createRadialGradient(CX,CY,scl*.76,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(1,'rgba(10,40,120,.28)');gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();const spec=gx.createRadialGradient(CX-scl*.38,CY-scl*.38,0,CX-scl*.14,CY-scl*.14,scl*.7);spec.addColorStop(0,'rgba(255,255,255,.06)');spec.addColorStop(1,'transparent');gx.beginPath();pathGen(SPHERE);gx.fillStyle=spec;gx.fill();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle='rgba(80,50,180,.04)';gx.fill();}}
-function drawRoutesExplorer(){const dashOff=-(now()/90)%20;S.routes.forEach(rt=>{const fc=centroid(rt.from),tc=centroid(rt.to);if(!fc||!tc)return;const pts=d3.range(61).map(i=>d3.geoInterpolate(fc,tc)(i/60));const line={type:'LineString',coordinates:pts};gx.save();gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);g.addColorStop(0,'rgba(220,160,30,.85)');g.addColorStop(.5,'rgba(212,114,48,.9)');g.addColorStop(1,'rgba(100,170,60,.85)');gx.strokeStyle=g;}else gx.strokeStyle='rgba(212,114,48,.8)';gx.lineWidth=1.5;gx.setLineDash([5,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach(pt=>{const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor='rgba(220,160,30,.8)';gx.shadowBlur=8;gx.beginPath();gx.arc(p[0],p[1],3.2,0,Math.PI*2);gx.fillStyle='#d4a020';gx.fill();gx.restore();});gx.restore();});}
-function drawAdvanced(){const t=now();spawnParticles();updateParticles();const og=gx.createRadialGradient(CX-scl*.2,CY-scl*.2,scl*.05,CX,CY,scl);og.addColorStop(0,'#04090f');og.addColorStop(.6,'#020508');og.addColorStop(1,'#010203');gx.beginPath();pathGen(SPHERE);gx.fillStyle=og;gx.fill();if(showGrid){gx.save();gx.shadowColor='rgba(0,240,255,.6)';gx.shadowBlur=6;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,200,255,.4)';gx.lineWidth=.5;gx.stroke();gx.restore();}else{gx.save();gx.shadowColor='rgba(0,180,255,.3)';gx.shadowBlur=3;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,150,200,.18)';gx.lineWidth=.3;gx.stroke();gx.restore();}countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id],sel=id===hlId;const fl=animFlash[id];gx.beginPath();pathGen(c);let fill,stroke,sw,sblur=0,scolor='transparent';const pulse=Math.sin(t/600+id*0.7)*0.5+0.5;if(fl){const p=Math.min(1,(t-fl.start)/600),ease=Math.sin(p*Math.PI);if(hom){fill=`rgba(255,0,200,${0.05+ease*.3})`;stroke='#FF00CC';scolor='#FF00CC';sblur=20;}else if(vis){fill=`rgba(0,240,255,${0.04+ease*.25})`;stroke='#00F0FF';scolor='#00F0FF';sblur=18;}else{fill=`rgba(0,100,160,${ease*.2})`;stroke='rgba(0,200,255,.7)';scolor='rgba(0,200,255,.5)';sblur=12;}sw=1.6;if(p>=1)delete animFlash[id];}else if(hom){fill=`rgba(255,0,200,${0.04+pulse*.06})`;stroke='rgba(255,0,200,0.9)';scolor='#FF00CC';sblur=sel?18:10;sw=sel?1.8:1.2;}else if(vis){fill=`rgba(0,220,255,${0.03+pulse*.05})`;stroke=sel?'rgba(0,240,255,1)':'rgba(0,200,255,.75)';scolor='#00F0FF';sblur=sel?16:8;sw=sel?1.8:1.1;}else{fill='rgba(0,30,50,.35)';stroke=sel?'rgba(0,200,255,.7)':'rgba(0,160,200,.3)';scolor=sel?'rgba(0,200,255,.5)':'transparent';sblur=sel?6:0;sw=sel?.8:.4;}gx.save();if(sblur>0){gx.shadowColor=scolor;gx.shadowBlur=sblur;}gx.fillStyle=fill;gx.fill();gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();if(id===routeFrom){gx.shadowColor='rgba(255,220,0,1)';gx.shadowBlur=18;gx.strokeStyle='rgba(255,220,0,1)';gx.lineWidth=2.2;gx.stroke();}gx.restore();});if(showRts)drawRoutesAdvanced(t);drawParticles();if(journeyActive)drawJourneyRoutes();drawCountryIcons();const rim=gx.createRadialGradient(CX,CY,scl*.72,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(0.7,`rgba(0,120,200,${0.06+0.03*Math.sin(t/1200)})`);rim.addColorStop(1,`rgba(80,0,200,${0.1+0.04*Math.sin(t/900)})`);gx.save();gx.shadowColor='rgba(0,200,255,.5)';gx.shadowBlur=20;gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();gx.restore();drawHUDCorners();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle=`rgba(60,0,140,${0.04+0.02*Math.sin(t/300)})`;gx.fill();}}
-function drawRoutesAdvanced(t){const dashOff=-(t/60)%20;S.routes.forEach(rt=>{const fc=centroid(rt.from),tc=centroid(rt.to);if(!fc||!tc)return;const pts=d3.range(61).map(i=>d3.geoInterpolate(fc,tc)(i/60));const line={type:'LineString',coordinates:pts};gx.save();gx.shadowColor='rgba(0,240,255,.7)';gx.shadowBlur=8;gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);g.addColorStop(0,'rgba(255,0,200,.8)');g.addColorStop(.5,'rgba(140,80,255,.9)');g.addColorStop(1,'rgba(0,240,255,.8)');gx.strokeStyle=g;}else gx.strokeStyle='rgba(0,240,255,.8)';gx.lineWidth=1.4;gx.setLineDash([4,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach(pt=>{const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor='rgba(0,240,255,1)';gx.shadowBlur=14;gx.beginPath();gx.arc(p[0],p[1],3.5,0,Math.PI*2);gx.fillStyle='#00F0FF';gx.fill();gx.restore();});gx.restore();});}
+function drawCountryIcons(){if(!countries.length)return;const adv=currentMode==='advanced';const ranks=getVisitRanks();countries.forEach(c=>{const id=+c.id;const data=S.visited[id];if(!data)return;const rank=ranks[id];const hasNotes=!!(data.notes&&data.notes.trim());const hasPhotos=!!(data.photos&&data.photos.length>0);if(!rank&&!hasNotes&&!hasPhotos)return;const cen=centroidMap.get(id);if(!cen)return;if(d3.geoDistance(cen,[-rot[0],-rot[1]])>Math.PI/2)return;const pos=proj(cen);if(!pos)return;const hasIcons=hasNotes||hasPhotos;const badgeH=rank?13:0;const iconsH=hasIcons?11:0;const gap=rank&&hasIcons?3:0;const totalH=badgeH+gap+iconsH;let y=pos[1]-totalH/2;if(rank){const num=String(rank);gx.save();gx.font=`bold 7.5px 'Share Tech Mono',monospace`;const tw=gx.measureText(num).width;const bw=Math.max(16,tw+10),bh=12,br=3;const bx=pos[0]-bw/2,by=y;if(adv){gx.shadowColor='rgba(0,240,255,.65)';gx.shadowBlur=9;}else{gx.shadowColor='rgba(196,146,42,.45)';gx.shadowBlur=6;}roundRect(gx,bx,by,bw,bh,br,'rgba(5,10,18,.92)');gx.strokeStyle=adv?'rgba(0,240,255,.72)':'rgba(196,146,42,.68)';gx.lineWidth=0.85;roundRect(gx,bx,by,bw,bh,br,null,true);gx.fillStyle=adv?'#00F0FF':'#d4a030';gx.textAlign='center';gx.textBaseline='middle';gx.fillText(num,pos[0],by+bh/2+0.5);gx.restore();y+=bh+gap;}if(hasIcons){const icons=[];if(hasNotes)icons.push({type:'notes'});if(hasPhotos)icons.push({type:'photos'});const spacing=13;const totalW=(icons.length-1)*spacing;const startX=pos[0]-totalW/2;const iy=y+5;icons.forEach((icon,i)=>{const ix=startX+i*spacing,r=5;if(icon.type==='notes'){const nc=adv?'rgba(255,180,0,.9)':'rgba(196,146,42,.9)';const nglow=adv?'rgba(255,180,0,.7)':'rgba(196,146,42,.55)';gx.save();gx.shadowColor=nglow;gx.shadowBlur=7;gx.beginPath();gx.arc(ix,iy,r,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.82)';gx.fill();gx.beginPath();gx.moveTo(ix,iy-3.2);gx.lineTo(ix+3,iy+2.2);gx.lineTo(ix-3,iy+2.2);gx.closePath();gx.fillStyle=nc;gx.fill();gx.restore();}else{const pc=adv?'rgba(0,200,255,.9)':'rgba(74,176,220,.9)';const pglow=adv?'rgba(0,200,255,.7)':'rgba(74,176,220,.55)';gx.save();gx.shadowColor=pglow;gx.shadowBlur=7;gx.beginPath();gx.arc(ix,iy,r,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.82)';gx.fill();gx.beginPath();gx.arc(ix,iy,3.2,0,Math.PI*2);gx.fillStyle=pc;gx.fill();gx.beginPath();gx.arc(ix,iy,1.3,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.75)';gx.fill();gx.restore();}});}})}
+function drawExplorer(){const t=now();const og=gx.createRadialGradient(CX-scl*.3,CY-scl*.3,scl*.04,CX,CY,scl);og.addColorStop(0,'#0e2848');og.addColorStop(.55,'#081a30');og.addColorStop(1,'#040d1c');gx.beginPath();pathGen(SPHERE);gx.fillStyle=og;gx.fill();if(showGrid){gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(30,70,120,.35)';gx.lineWidth=.3;gx.stroke();}
+// Two-pass rendering: fill all countries first (no shadow state changes),
+// then draw glowing countries in a single batched save/restore block.
+// This eliminates N GPU compositing flushes (one per visited country).
+const glowList=[];
+countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id],sel=id===hlId;const fl=animFlash[id];gx.beginPath();pathGen(c);let fill,stroke,sw=.5,shadow='',sblur=0;if(fl){const p=Math.min(1,(t-fl.start)/700),ease=Math.sin(p*Math.PI);if(hom)fill=lerpColor('#6a4010','#e8c060',ease);else if(vis)fill=lerpColor('#2a4818',getCountryColor(id),ease);else fill=lerpColor('#192c16','#4888c0',ease);stroke='rgba(200,220,180,.5)';sw=1.4;if(p>=1)delete animFlash[id];}else if(hom){fill=sel?'#b87820':'#7a5018';stroke=sel?'rgba(210,150,40,.8)':'rgba(160,100,20,.5)';sw=sel?1.4:.5;shadow='rgba(220,160,30,.35)';sblur=10;}else if(vis){const cc=_explorerColCache[id]||{fill:getCountryColor(id),fillSel:getCountryColor(id),stroke:'rgba(80,130,40,.45)',strokeSel:'rgba(120,180,60,.8)',glowShadow:'rgba(80,130,40,.3)'};fill=sel?cc.fillSel:cc.fill;stroke=sel?cc.strokeSel:cc.stroke;sw=sel?1.4:.5;shadow=cc.glowShadow;sblur=8;}else{fill=sel?'#253e20':'#192c16';stroke=sel?'rgba(60,110,50,.7)':'rgba(28,50,24,.7)';sw=sel?1.1:.35;}if(id===routeFrom){stroke='rgba(255,220,80,1)';sw=2;}
+// Fill pass — no shadow state touched
+gx.fillStyle=fill;gx.fill();
+// Queue glow countries; stroke non-glow countries immediately
+if(sblur>0){glowList.push({c,fill,shadow,sblur,stroke,sw});}else{gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();}});
+// Glow pass — ONE save/restore wraps ALL glowing countries
+if(glowList.length){gx.save();glowList.forEach(({c,fill,shadow,sblur,stroke,sw})=>{gx.shadowColor=shadow;gx.shadowBlur=sblur;gx.beginPath();pathGen(c);gx.fillStyle=fill;gx.fill();gx.shadowBlur=0;gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();});gx.restore();}
+if(showRts)drawRoutesExplorer();if(journeyActive)drawJourneyRoutes();drawCountryIcons();const sun=gx.createRadialGradient(CX-scl*.42,CY-scl*.42,0,CX-scl*.1,CY-scl*.1,scl*.85);sun.addColorStop(0,'rgba(255,250,220,.07)');sun.addColorStop(.5,'rgba(200,210,250,.02)');sun.addColorStop(1,'transparent');gx.beginPath();pathGen(SPHERE);gx.fillStyle=sun;gx.fill();const rim=gx.createRadialGradient(CX,CY,scl*.76,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(1,'rgba(10,40,120,.28)');gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();const spec=gx.createRadialGradient(CX-scl*.38,CY-scl*.38,0,CX-scl*.14,CY-scl*.14,scl*.7);spec.addColorStop(0,'rgba(255,255,255,.06)');spec.addColorStop(1,'transparent');gx.beginPath();pathGen(SPHERE);gx.fillStyle=spec;gx.fill();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle='rgba(80,50,180,.04)';gx.fill();}}
+function drawRoutesExplorer(){const dashOff=-(now()/90)%20;S.routes.forEach(rt=>{const cached=getRouteLine(rt.from,rt.to);if(!cached)return;const{fc,tc,line}=cached;gx.save();gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);g.addColorStop(0,'rgba(220,160,30,.85)');g.addColorStop(.5,'rgba(212,114,48,.9)');g.addColorStop(1,'rgba(100,170,60,.85)');gx.strokeStyle=g;}else gx.strokeStyle='rgba(212,114,48,.8)';gx.lineWidth=1.5;gx.setLineDash([5,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach(pt=>{const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor='rgba(220,160,30,.8)';gx.shadowBlur=8;gx.beginPath();gx.arc(p[0],p[1],3.2,0,Math.PI*2);gx.fillStyle='#d4a020';gx.fill();gx.restore();});gx.restore();});}
+function drawAdvanced(){const t=now();spawnParticles();updateParticles();const og=gx.createRadialGradient(CX-scl*.2,CY-scl*.2,scl*.05,CX,CY,scl);og.addColorStop(0,'#04090f');og.addColorStop(.6,'#020508');og.addColorStop(1,'#010203');gx.beginPath();pathGen(SPHERE);gx.fillStyle=og;gx.fill();if(showGrid){gx.save();gx.shadowColor='rgba(0,240,255,.6)';gx.shadowBlur=6;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,200,255,.4)';gx.lineWidth=.5;gx.stroke();gx.restore();}else{gx.save();gx.shadowColor='rgba(0,180,255,.3)';gx.shadowBlur=3;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,150,200,.18)';gx.lineWidth=.3;gx.stroke();gx.restore();}
+// No per-country save/restore — eliminates ~200 GPU state copies per frame.
+// Shadow is set inline and explicitly reset to 0 before every stroke.
+countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id],sel=id===hlId;const fl=animFlash[id];gx.beginPath();pathGen(c);let fill,stroke,sw,sblur=0,scolor='transparent';const pulse=Math.sin(t/600+id*0.7)*0.5+0.5;if(fl){const p=Math.min(1,(t-fl.start)/600),ease=Math.sin(p*Math.PI);if(hom){fill=`rgba(255,0,200,${0.05+ease*.3})`;stroke='#FF00CC';scolor='#FF00CC';sblur=20;}else if(vis){const cc=_neonColCache[id]||{hex:'#00F0FF',r:0,g:240,b:255,scolor:'#00F0FF'};fill=`rgba(${cc.r},${cc.g},${cc.b},${0.04+ease*.25})`;stroke=cc.hex;scolor=cc.scolor;sblur=18;}else{fill=`rgba(0,100,160,${ease*.2})`;stroke='rgba(0,200,255,.7)';scolor='rgba(0,200,255,.5)';sblur=12;}sw=1.6;if(p>=1)delete animFlash[id];}else if(hom){fill=`rgba(255,0,200,${0.04+pulse*.06})`;stroke='rgba(255,0,200,0.9)';scolor='#FF00CC';sblur=sel?18:10;sw=sel?1.8:1.2;}else if(vis){const cc=_neonColCache[id]||{hex:'#00F0FF',r:0,g:240,b:255,stroke75:'rgba(0,240,255,.75)',scolor:'#00F0FF'};fill=`rgba(${cc.r},${cc.g},${cc.b},${0.03+pulse*.05})`;stroke=sel?cc.hex:cc.stroke75;scolor=cc.scolor;sblur=sel?16:8;sw=sel?1.8:1.1;}else{fill='rgba(0,30,50,.35)';stroke=sel?'rgba(0,200,255,.7)':'rgba(0,160,200,.3)';scolor=sel?'rgba(0,200,255,.5)':'transparent';sblur=sel?6:0;sw=sel?.8:.4;}
+// Apply shadow only when needed, always reset before stroke
+if(sblur>0){gx.shadowColor=scolor;gx.shadowBlur=sblur;}
+gx.fillStyle=fill;gx.fill();
+gx.shadowBlur=0;gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();
+// routeFrom highlight: one save/restore only for this special case
+if(id===routeFrom){gx.save();gx.shadowColor='rgba(255,220,0,1)';gx.shadowBlur=18;gx.strokeStyle='rgba(255,220,0,1)';gx.lineWidth=2.2;gx.stroke();gx.restore();}});
+if(showRts)drawRoutesAdvanced(t);drawParticles();if(journeyActive)drawJourneyRoutes();drawCountryIcons();const rim=gx.createRadialGradient(CX,CY,scl*.72,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(0.7,`rgba(0,120,200,${0.06+0.03*Math.sin(t/1200)})`);rim.addColorStop(1,`rgba(80,0,200,${0.1+0.04*Math.sin(t/900)})`);gx.save();gx.shadowColor='rgba(0,200,255,.5)';gx.shadowBlur=20;gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();gx.restore();drawHUDCorners();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle=`rgba(60,0,140,${0.04+0.02*Math.sin(t/300)})`;gx.fill();}}
+function drawRoutesAdvanced(t){const dashOff=-(t/60)%20;S.routes.forEach(rt=>{const cached=getRouteLine(rt.from,rt.to);if(!cached)return;const{fc,tc,line}=cached;gx.save();gx.shadowColor='rgba(0,240,255,.7)';gx.shadowBlur=8;gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);g.addColorStop(0,'rgba(255,0,200,.8)');g.addColorStop(.5,'rgba(140,80,255,.9)');g.addColorStop(1,'rgba(0,240,255,.8)');gx.strokeStyle=g;}else gx.strokeStyle='rgba(0,240,255,.8)';gx.lineWidth=1.4;gx.setLineDash([4,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach(pt=>{const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor='rgba(0,240,255,1)';gx.shadowBlur=14;gx.beginPath();gx.arc(p[0],p[1],3.5,0,Math.PI*2);gx.fillStyle='#00F0FF';gx.fill();gx.restore();});gx.restore();});}
 function drawHUDCorners(){const len=22,w=1.2;const x0=CX-scl,y0=CY-scl,x1=CX+scl,y1=CY+scl;gx.save();gx.shadowColor='rgba(0,240,255,.8)';gx.shadowBlur=6;gx.strokeStyle='rgba(0,240,255,.55)';gx.lineWidth=w;[[x0+3,y0+3,1,1],[x1-3,y0+3,-1,1],[x0+3,y1-3,1,-1],[x1-3,y1-3,-1,-1]].forEach(([cx2,cy2,sx,sy])=>{gx.beginPath();gx.moveTo(cx2,cy2);gx.lineTo(cx2+len*sx,cy2);gx.stroke();gx.beginPath();gx.moveTo(cx2,cy2);gx.lineTo(cx2,cy2+len*sy);gx.stroke();});gx.restore();}
 function lerpColor(a,b,t){const parse=h=>{const s=h.replace('#','');return[parseInt(s.slice(0,2),16),parseInt(s.slice(2,4),16),parseInt(s.slice(4,6),16)];};const[r1,g1,b1]=parse(a),[r2,g2,b2]=parse(b);return`rgb(${Math.round(r1+(r2-r1)*t)},${Math.round(g1+(g2-g1)*t)},${Math.round(b1+(b2-b1)*t)})`;}
-function centroid(id){const c=countries.find(c=>+c.id===+id);return c?d3.geoCentroid(c):null;}
+// ── Real-world country colours for Explorer mode ──────────────────────────────
+// Each hex is the approximate dominant terrain/vegetation colour visible from space.
+// Palette key:
+//   Sandy/desert  #c8a050   Savanna       #7a9e30   Tropical green #2a8040
+//   Temperate EU  #4a7a32   Nordic forest #2a6032   Arctic/ice     #b8d4e8
+//   Boreal Russia #2d6030   Central Asia  #a09e50   Outback        #c06030
+//   Mediterranean #6a8e30   E-Asia temp   #4a7838   S-Asia         #5a9038
+const COUNTRY_COLORS={
+  // ── Arctic / ice ──
+  304:'#b8d4e8',352:'#bcd6e0',
+  // ── Desert & arid ──
+  682:'#c8a050',784:'#caa852',414:'#c8a050',634:'#c8a050',48:'#c8a050',
+  512:'#c4a048',887:'#c09848',368:'#c09848',400:'#c4a248',760:'#be9840',
+  818:'#c8a840',434:'#c8a840',12:'#c49840',788:'#c4a048',504:'#b09040',
+  732:'#c8a840',562:'#c4a040',466:'#c4a040',148:'#c09840',729:'#bc9840',
+  478:'#c09840',262:'#ba9840',4:'#b89040',364:'#b89040',376:'#b89848',
+  516:'#c0a055',706:'#c0a048',232:'#b09848',72:'#b89848',
+  // ── Central-Asian steppe ──
+  398:'#a09e50',496:'#a09040',860:'#a49c48',795:'#a49c48',417:'#9a9848',
+  762:'#9a9848',586:'#a09048',
+  // ── Tropical rainforest (equatorial) ──
+  180:'#2a7e38',178:'#2a7e38',266:'#288040',226:'#2a8040',
+  360:'#2a8040',458:'#2a8040',96:'#2a8040',598:'#2a7e38',
+  // ── Amazon / tropical S-America ──
+  76:'#2e8038',170:'#2e8038',862:'#2a8038',218:'#2e8040',
+  328:'#2e8040',740:'#2e8040',254:'#2e8040',
+  // ── Sub-Saharan savanna ──
+  566:'#7a9e30',288:'#7a9e30',404:'#7a9e30',834:'#7a9e30',800:'#7a9e30',
+  646:'#7a9e30',108:'#7a9e30',508:'#7a9e30',894:'#7a9e30',716:'#7a9e30',
+  854:'#7a9e30',204:'#7a9e30',768:'#7a9e30',686:'#7a9e30',270:'#7a9e30',
+  624:'#7a9e30',324:'#7a9e30',694:'#7a9e30',430:'#7a9e30',384:'#6a9e30',
+  454:'#7a9e30',450:'#7a9e30',120:'#6a9e30',140:'#6a9e30',24:'#7a9e30',
+  728:'#7a9e30',231:'#88a038',710:'#7a9840',748:'#7a9840',426:'#7a9840',
+  // ── Australia (red outback) ──
+  36:'#c06030',554:'#4a7a30',
+  // ── Mediterranean / S-Europe ──
+  724:'#6a8e30',620:'#6a8e30',380:'#6a8e30',300:'#6a8e30',
+  792:'#6a9830',196:'#6a8e30',470:'#6a8e30',
+  // ── Nordic (dark boreal) ──
+  578:'#2a6032',752:'#2a6032',246:'#2a6032',
+  // ── Russia ──
+  643:'#2d6030',
+  // ── Temperate Europe ──
+  826:'#4a7a32',372:'#4a7a32',250:'#4a7a32',276:'#4a7a32',528:'#4a7a32',
+  56:'#4a7a32',208:'#3a7030',616:'#4a7a32',203:'#4a7a32',703:'#4a7a32',
+  348:'#4a7a32',40:'#4a7a32',756:'#4a7a32',438:'#4a7a32',442:'#4a7a32',
+  642:'#4a7a32',100:'#4a7a32',688:'#4a7a32',191:'#4a7a32',705:'#4a7a32',
+  70:'#4a7a32',499:'#4a7a32',8:'#4a7a32',807:'#4a7a32',804:'#4a7a32',
+  112:'#3a6a28',498:'#4a7a32',233:'#3a7030',440:'#3a7030',674:'#4a7a32',
+  383:'#4a7a32',20:'#4a7a32',
+  // ── Caucasus / Eastern Europe ──
+  268:'#5a8838',31:'#5a8838',422:'#8a9e40',
+  // ── East Asia (temperate) ──
+  156:'#4a7838',392:'#4a7838',410:'#4a7838',408:'#4a7838',158:'#4a7838',344:'#4a7838',
+  // ── South Asia ──
+  356:'#6a9838',50:'#5a9038',524:'#5a9038',64:'#5a9038',144:'#3a8840',
+  // ── SE Asia ──
+  764:'#3a8040',704:'#3a8040',104:'#3a8040',116:'#3a8040',418:'#3a8040',
+  608:'#3a8040',626:'#3a8040',
+  // ── Central America ──
+  188:'#3a8840',222:'#3a8840',320:'#3a8840',340:'#3a8840',558:'#3a8840',
+  591:'#3a8840',84:'#3a8840',
+  // ── Caribbean ──
+  44:'#2e9040',52:'#2e9040',192:'#3a9040',388:'#3a9040',332:'#3a8840',
+  214:'#3a8840',780:'#3a8840',659:'#3a9040',670:'#3a9040',
+  // ── Temperate S-America ──
+  32:'#5a8838',152:'#5a8838',600:'#5a9038',858:'#5a9038',68:'#4a8838',604:'#4a8838',
+  // ── Pacific Islands ──
+  242:'#2a9040',776:'#2a9040',882:'#2a9040',296:'#2a9040',585:'#2a9040',
+  584:'#2a9040',583:'#2a9040',548:'#2a9040',90:'#2a9040',
+  // ── N-Africa / Middle-East mix (semi-arid) ──
+  788:'#c4a048',504:'#b09040',788:'#c4a048',
+  // ── Temperate N-America ──
+  840:'#4a7a32',124:'#2d6032',484:'#6a9838',
+};
+function getCountryColor(id){return COUNTRY_COLORS[+id]||'#3a5e24';}
+function lightenHex(hex,t){const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);const nr=Math.round(r+(255-r)*t),ng=Math.round(g+(255-g)*t),nb=Math.round(b+(255-b)*t);return'#'+[nr,ng,nb].map(v=>v.toString(16).padStart(2,'0')).join('');}
+// ── Cyberpunk / neon country colours for Advanced mode ───────────────────────
+// Each region gets a distinct neon hue so the globe reads like a holographic
+// tactical display. Hue assignments by region:
+//   Middle East/Sahara    #FF8C00  neon amber
+//   Central-Asian steppe  #FF5500  neon orange
+//   Sub-Saharan savanna   #FF00CC  hot magenta
+//   Tropical Africa       #39FF14  electric lime
+//   S. Africa             #FF1493  deep neon pink
+//   Europe (temperate)    #00BFFF  electric blue
+//   Nordic / boreal       #00FFFF  pure cyan
+//   Russia                #7B00FF  electric violet
+//   Caucasus              #FF88FF  neon lavender
+//   East Asia             #CC00FF  neon purple
+//   South Asia            #00FF88  neon mint
+//   SE Asia               #00FFD4  electric aqua
+//   Tropical Americas     #80FF00  chartreuse
+//   Temperate N. America  #00DDFF  neon sky-blue
+//   Central Am/Caribbean  #FFFF00  electric yellow
+//   Temperate S. America  #00FFAA  neon teal
+//   Australia             #FF3300  neon red-orange
+//   New Zealand           #00FF66  neon green
+//   Pacific islands       #FFD700  electric gold
+//   Arctic / ice          #C0EEFF  pale ice-neon
+const COUNTRY_NEON={
+  // ── Arctic / ice ──
+  304:'#C0EEFF',352:'#C0EEFF',
+  // ── Middle East + North Africa (desert) — neon amber ──
+  682:'#FF8C00',784:'#FF8C00',414:'#FF8C00',634:'#FF8C00',48:'#FF8C00',
+  512:'#FF8C00',887:'#FF8C00',368:'#FF8C00',400:'#FF8C00',760:'#FF8C00',
+  818:'#FF8C00',434:'#FF8C00',12:'#FF8C00',788:'#FF8C00',504:'#FF8C00',
+  732:'#FF8C00',562:'#FF8C00',466:'#FF8C00',148:'#FF8C00',729:'#FF8C00',
+  478:'#FF8C00',262:'#FF8C00',4:'#FF8C00',364:'#FF8C00',376:'#FF8C00',
+  516:'#FF8C00',706:'#FF8C00',232:'#FF8C00',72:'#FF8C00',
+  // ── Central Asian steppe — neon orange ──
+  398:'#FF5500',496:'#FF5500',860:'#FF5500',795:'#FF5500',417:'#FF5500',
+  762:'#FF5500',586:'#FF5500',
+  // ── Tropical equatorial Africa — electric lime ──
+  180:'#39FF14',178:'#39FF14',266:'#39FF14',226:'#39FF14',120:'#39FF14',140:'#39FF14',
+  // ── Sub-Saharan savanna — hot magenta ──
+  566:'#FF00CC',288:'#FF00CC',404:'#FF00CC',834:'#FF00CC',800:'#FF00CC',
+  646:'#FF00CC',108:'#FF00CC',508:'#FF00CC',894:'#FF00CC',716:'#FF00CC',
+  854:'#FF00CC',204:'#FF00CC',768:'#FF00CC',686:'#FF00CC',270:'#FF00CC',
+  624:'#FF00CC',324:'#FF00CC',694:'#FF00CC',430:'#FF00CC',384:'#FF00CC',
+  454:'#FF00CC',450:'#FF00CC',24:'#FF00CC',728:'#FF00CC',231:'#FF00CC',
+  // ── Southern Africa — deep neon pink ──
+  710:'#FF1493',748:'#FF1493',426:'#FF1493',
+  // ── Nordic / boreal — pure cyan ──
+  578:'#00FFFF',752:'#00FFFF',246:'#00FFFF',
+  // ── Russia — electric violet ──
+  643:'#7B00FF',
+  // ── Temperate Europe — electric blue ──
+  826:'#00BFFF',372:'#00BFFF',250:'#00BFFF',276:'#00BFFF',528:'#00BFFF',
+  56:'#00BFFF',208:'#00BFFF',616:'#00BFFF',203:'#00BFFF',703:'#00BFFF',
+  348:'#00BFFF',40:'#00BFFF',756:'#00BFFF',438:'#00BFFF',442:'#00BFFF',
+  642:'#00BFFF',100:'#00BFFF',688:'#00BFFF',191:'#00BFFF',705:'#00BFFF',
+  70:'#00BFFF',499:'#00BFFF',8:'#00BFFF',807:'#00BFFF',804:'#00BFFF',
+  112:'#00BFFF',498:'#00BFFF',233:'#00BFFF',440:'#00BFFF',674:'#00BFFF',
+  383:'#00BFFF',20:'#00BFFF',724:'#00BFFF',620:'#00BFFF',380:'#00BFFF',
+  300:'#00BFFF',792:'#00BFFF',196:'#00BFFF',470:'#00BFFF',
+  // ── Caucasus — neon lavender ──
+  268:'#FF88FF',31:'#FF88FF',422:'#FF88FF',
+  // ── East Asia — electric purple ──
+  156:'#CC00FF',392:'#CC00FF',410:'#CC00FF',408:'#CC00FF',158:'#CC00FF',344:'#CC00FF',
+  // ── South Asia — neon mint ──
+  356:'#00FF88',50:'#00FF88',524:'#00FF88',64:'#00FF88',144:'#00FF88',
+  // ── SE Asia + Indonesia — electric aqua ──
+  360:'#00FFD4',458:'#00FFD4',96:'#00FFD4',764:'#00FFD4',704:'#00FFD4',
+  104:'#00FFD4',116:'#00FFD4',418:'#00FFD4',608:'#00FFD4',626:'#00FFD4',
+  // ── Tropical Americas (Amazon) — chartreuse ──
+  76:'#80FF00',170:'#80FF00',862:'#80FF00',218:'#80FF00',328:'#80FF00',
+  740:'#80FF00',254:'#80FF00',598:'#80FF00',
+  // ── Central America + Caribbean — electric yellow ──
+  188:'#FFFF00',222:'#FFFF00',320:'#FFFF00',340:'#FFFF00',558:'#FFFF00',
+  591:'#FFFF00',84:'#FFFF00',44:'#FFFF00',52:'#FFFF00',192:'#FFFF00',
+  388:'#FFFF00',332:'#FFFF00',214:'#FFFF00',780:'#FFFF00',659:'#FFFF00',670:'#FFFF00',
+  484:'#FFFF00',
+  // ── Temperate N. America — neon sky-blue ──
+  840:'#00DDFF',124:'#00DDFF',
+  // ── Temperate S. America — neon teal ──
+  32:'#00FFAA',152:'#00FFAA',600:'#00FFAA',858:'#00FFAA',68:'#00FFAA',604:'#00FFAA',
+  // ── Australia — neon red-orange ──
+  36:'#FF3300',
+  // ── New Zealand — neon green ──
+  554:'#00FF66',
+  // ── Pacific islands — electric gold ──
+  242:'#FFD700',776:'#FFD700',882:'#FFD700',296:'#FFD700',585:'#FFD700',
+  584:'#FFD700',583:'#FFD700',548:'#FFD700',90:'#FFD700',
+};
+function getNeonColor(id){return COUNTRY_NEON[+id]||'#00F0FF';}
+function centroid(id){return centroidMap.get(+id)||null;}
 function loop(t){rafId=requestAnimationFrame(loop);if(autoRot){rot[0]+=(t-lastT)*.006;}updateProjectionLayout();lastT=t;draw();if(journeyActive)updateJourneyConnectors();}
 function startRender(){cancelAnimationFrame(rafId);rafId=requestAnimationFrame(loop);}
 let dragging=false,dragP=null,rotP=null,hasDragged=false;
@@ -638,7 +883,12 @@ let pinchDist0=null;
 gc.addEventListener('touchstart',e=>{e.preventDefault();if(e.touches.length===2){pinchDist0=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);dragging=false;return;}const t=e.touches[0];dragging=true;hasDragged=false;dragP=[t.clientX,t.clientY];rotP=[...rot];tooltip.style.display='none';},{passive:false});
 gc.addEventListener('touchmove',e=>{e.preventDefault();if(e.touches.length===2&&pinchDist0!==null){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);const factor=d/pinchDist0;scl=Math.max(zoomMin(),Math.min(zoomMax(),scl*(1+(factor-1)*0.1)));proj.scale(scl);pinchDist0=d;showZoomBar();return;}if(!dragging)return;const t=e.touches[0];const dx=t.clientX-dragP[0],dy=t.clientY-dragP[1];if(Math.abs(dx)>3||Math.abs(dy)>3)hasDragged=true;rot[0]=rotP[0]+dx*.28;rot[1]=Math.max(-88,Math.min(88,rotP[1]-dy*.28));proj.rotate(rot);},{passive:false});
 gc.addEventListener('touchend',e=>{if(e.touches.length<2)pinchDist0=null;dragging=false;});
-gc.addEventListener('mousemove',e=>{if(dragging){tooltip.style.display='none';return;}const rect=gc.getBoundingClientRect();const x=e.clientX-rect.left,y=e.clientY-rect.top;if(Math.sqrt((x-CX)**2+(y-CY)**2)>scl){tooltip.style.display='none';tooltipHoverId=null;return;}const coords=proj.invert([x,y]);if(!coords){tooltip.style.display='none';tooltipHoverId=null;return;}const hit=countries.find(c=>d3.geoContains(c,coords));if(!hit){tooltip.style.display='none';tooltipHoverId=null;return;}const id=+hit.id;if(id!==tooltipHoverId){tooltipHoverId=id;const flag=getCFlag(id);const name=getName(id);const isVis=!!S.visited[id],isHom=!!S.homes[id];const data=S.visited[id]||{};const hasNotes=!!(data.notes&&data.notes.trim());const hasPhotos=!!(data.photos&&data.photos.length>0);const ranks=isVis?getVisitRanks():{};const rank=ranks[id];let badgesHtml='';if(rank)badgesHtml+=`<span class="tt-tb" style="border-color:rgba(196,146,42,.6);color:#d4a030;font-weight:700">#${rank}</span>`;if(isVis)badgesHtml+=`<span class="tt-tb v">✦ Visited</span>`;if(isHom)badgesHtml+=`<span class="tt-tb h">⌂ Home</span>`;if(hasNotes)badgesHtml+=`<span class="tt-tb" style="border-color:rgba(196,146,42,.5);color:rgba(196,146,42,.85)">▲ Notes</span>`;if(hasPhotos)badgesHtml+=`<span class="tt-tb" style="border-color:rgba(74,176,220,.5);color:rgba(74,176,220,.85)">● Photos</span>`;const subHtml=badgesHtml?`<div class="tt-sub"><div class="tt-tagbadges">${badgesHtml}</div></div>`:`<div class="tt-sub"><div class="tt-hint">${routeMode?'Click to '+(routeFrom?'set destination':'set departure'):'Click to open'}</div></div>`;tooltip.innerHTML=`<span class="tt-flag">${flag}</span><div class="tt-info"><div class="tt-name">${name}</div>${subHtml}</div>`;}tooltip.style.display='flex';const tx=Math.min(e.clientX+16,window.innerWidth-220);const ty=Math.max(10,e.clientY-46);tooltip.style.left=tx+'px';tooltip.style.top=ty+'px';});
+gc.addEventListener('mousemove',e=>{if(dragging){tooltip.style.display='none';return;}
+// Move existing tooltip immediately (smooth) even when throttled
+if(tooltipHoverId!==null&&tooltip.style.display==='flex'){const _tx=Math.min(e.clientX+16,window.innerWidth-220),_ty=Math.max(10,e.clientY-46);tooltip.style.left=_tx+'px';tooltip.style.top=_ty+'px';}
+// Throttle expensive hit-detection (proj.invert + geoContains) to ~30 fps
+const _now=performance.now();if(_now-_lastTooltipCheck<33)return;_lastTooltipCheck=_now;
+const rect=gc.getBoundingClientRect();const x=e.clientX-rect.left,y=e.clientY-rect.top;if(Math.sqrt((x-CX)**2+(y-CY)**2)>scl){tooltip.style.display='none';tooltipHoverId=null;return;}const coords=proj.invert([x,y]);if(!coords){tooltip.style.display='none';tooltipHoverId=null;return;}const hit=countries.find(c=>d3.geoContains(c,coords));if(!hit){tooltip.style.display='none';tooltipHoverId=null;return;}const id=+hit.id;if(id!==tooltipHoverId){tooltipHoverId=id;const flag=getCFlag(id);const name=getName(id);const isVis=!!S.visited[id],isHom=!!S.homes[id];const data=S.visited[id]||{};const hasNotes=!!(data.notes&&data.notes.trim());const hasPhotos=!!(data.photos&&data.photos.length>0);const ranks=isVis?getVisitRanks():{};const rank=ranks[id];let badgesHtml='';if(rank)badgesHtml+=`<span class="tt-tb" style="border-color:rgba(196,146,42,.6);color:#d4a030;font-weight:700">#${rank}</span>`;if(isVis)badgesHtml+=`<span class="tt-tb v">✦ Visited</span>`;if(isHom)badgesHtml+=`<span class="tt-tb h">⌂ Home</span>`;if(hasNotes)badgesHtml+=`<span class="tt-tb" style="border-color:rgba(196,146,42,.5);color:rgba(196,146,42,.85)">▲ Notes</span>`;if(hasPhotos)badgesHtml+=`<span class="tt-tb" style="border-color:rgba(74,176,220,.5);color:rgba(74,176,220,.85)">● Photos</span>`;const subHtml=badgesHtml?`<div class="tt-sub"><div class="tt-tagbadges">${badgesHtml}</div></div>`:`<div class="tt-sub"><div class="tt-hint">${routeMode?'Click to '+(routeFrom?'set destination':'set departure'):'Click to open'}</div></div>`;tooltip.innerHTML=`<span class="tt-flag">${flag}</span><div class="tt-info"><div class="tt-name">${name}</div>${subHtml}</div>`;}tooltip.style.display='flex';const tx=Math.min(e.clientX+16,window.innerWidth-220);const ty=Math.max(10,e.clientY-46);tooltip.style.left=tx+'px';tooltip.style.top=ty+'px';});
 gc.addEventListener('mouseleave',()=>{tooltip.style.display='none';tooltipHoverId=null;});
 function setRouteMode(on,sub){routeMode=on;if(sub)routeSubMode=sub;if(!on){routeFrom=null;hlId=selId;}document.getElementById('cb-route-mode').classList.toggle('on',on);document.getElementById('route-hint').classList.toggle('vis',on);document.body.classList.toggle('route-mode-add',on&&routeSubMode==='add');document.body.classList.toggle('route-mode-remove',on&&routeSubMode==='remove');document.getElementById('rh-add').classList.toggle('active',routeSubMode==='add');document.getElementById('rh-rem').classList.toggle('active',routeSubMode==='remove');updateRouteHintLabel();}
 function updateRouteHintLabel(){const lbl=document.getElementById('route-hint-step');if(!lbl)return;if(!routeMode||routeSubMode!=='add'){lbl.textContent='';return;}lbl.textContent=routeFrom?`From: ${getCFlag(routeFrom)} ${getName(routeFrom)} — now pick destination`:'Click departure country';}
@@ -672,13 +922,13 @@ document.getElementById('photo-inp').addEventListener('change',async e=>{if(selI
 async function compress(file,maxDim=900,q=0.78){return new Promise((res,rej)=>{const img=new Image(),url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);const s=Math.min(1,maxDim/Math.max(img.width,img.height));const cv=document.createElement('canvas');cv.width=img.width*s;cv.height=img.height*s;cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);res(cv.toDataURL('image/jpeg',q));};img.onerror=rej;img.src=url;});}
 document.getElementById('sb-close').addEventListener('click',()=>{document.getElementById('sidebar').classList.remove('open');hlId=null;selId=null;});
 document.getElementById('cb-rot').addEventListener('click',function(){autoRot=!autoRot;this.classList.toggle('on',autoRot);});
-document.getElementById('cb-rt').addEventListener('click',function(){showRts=!showRts;this.classList.toggle('on',showRts);});
+document.getElementById('cb-rt').addEventListener('click',function(){showRts=!showRts;this.classList.toggle('on',showRts);_minimapDirty=true;});
 document.getElementById('cb-grid').addEventListener('click',function(){showGrid=!showGrid;this.classList.toggle('on',showGrid);});
 document.getElementById('cb-reset').addEventListener('click',()=>{rot=[15,-25,0];scl=R;proj.rotate(rot).scale(scl);toast('View reset');});
 function updateModeUI(){const adv=currentMode==='advanced';document.getElementById('btn-explorer').classList.toggle('active',!adv);document.getElementById('btn-advanced').classList.toggle('active',adv);document.getElementById('tagline-txt').textContent=adv?'Global Tactical Awareness System':'Your world · your story';sizeAtm();}
-document.getElementById('btn-explorer').addEventListener('click',()=>{if(currentMode==='explorer')return;currentMode='explorer';document.body.classList.remove('advanced');localStorage.setItem('wm4-mode','explorer');updateModeUI();initStars();toast('🌍 Explorer Mode');});
-document.getElementById('btn-advanced').addEventListener('click',()=>{if(currentMode==='advanced')return;currentMode='advanced';document.body.classList.add('advanced');localStorage.setItem('wm4-mode','advanced');updateModeUI();initStars();toast('⚡ Advanced Mode · System Online');});
-function setupSearch(sorted){const inp=document.getElementById('search-inp'),res=document.getElementById('search-res');inp.addEventListener('input',()=>{const q=inp.value.trim().toLowerCase();if(!q){res.style.display='none';return;}const hits=sorted.filter(c=>getName(c.id).toLowerCase().includes(q)).slice(0,9);if(!hits.length){res.style.display='none';return;}res.innerHTML='';res.style.display='block';hits.forEach(c=>{const item=document.createElement('div');item.className='sr-item';item.innerHTML=`<span>${getCFlag(c.id)}</span><span>${getName(c.id)}</span>`;item.addEventListener('click',()=>{res.style.display='none';inp.value='';flyTo(...d3.geoCentroid(c));setTimeout(()=>selectCountry(+c.id),820);});res.appendChild(item);});});document.addEventListener('click',e=>{if(!inp.contains(e.target)&&!res.contains(e.target))res.style.display='none';});}
+document.getElementById('btn-explorer').addEventListener('click',()=>{if(currentMode==='explorer')return;currentMode='explorer';document.body.classList.remove('advanced');localStorage.setItem('wm4-mode','explorer');updateModeUI();initStars();_minimapDirty=true;toast('🌍 Explorer Mode');});
+document.getElementById('btn-advanced').addEventListener('click',()=>{if(currentMode==='advanced')return;currentMode='advanced';document.body.classList.add('advanced');localStorage.setItem('wm4-mode','advanced');updateModeUI();initStars();_minimapDirty=true;toast('⚡ Advanced Mode · System Online');});
+function setupSearch(sorted){const inp=document.getElementById('search-inp'),res=document.getElementById('search-res');inp.addEventListener('input',()=>{const q=inp.value.trim().toLowerCase();if(!q){res.style.display='none';return;}const hits=sorted.filter(c=>getName(c.id).toLowerCase().includes(q)).slice(0,9);if(!hits.length){res.style.display='none';return;}res.innerHTML='';res.style.display='block';hits.forEach(c=>{const item=document.createElement('div');item.className='sr-item';item.innerHTML=`<span>${getCFlag(c.id)}</span><span>${getName(c.id)}</span>`;item.addEventListener('click',()=>{res.style.display='none';inp.value='';const cen=centroidMap.get(+c.id);if(cen)flyTo(...cen);setTimeout(()=>selectCountry(+c.id),820);});res.appendChild(item);});});document.addEventListener('click',e=>{if(!inp.contains(e.target)&&!res.contains(e.target))res.style.display='none';});}
 function flyTo(lon,lat,dur=820,onDone){const fromPt=[-rot[0],-rot[1]];const toPt=[lon,lat];const interp=d3.geoInterpolate(fromPt,toPt);const t0=now();(function step(){const t=Math.min(1,(now()-t0)/dur),ease=t<.5?2*t*t:-1+(4-2*t)*t;const[lo,la]=interp(ease);rot[0]=-lo;rot[1]=-la;proj.rotate(rot);if(t<1)requestAnimationFrame(step);else if(onDone)onDone();})();}
 function updateStats(){const v=Object.keys(S.visited).length,h=Object.keys(S.homes).length,r=S.routes.length,total=countries.length||195;document.getElementById('sc').textContent=v;document.getElementById('hc').textContent=h;document.getElementById('rc').textContent=r;document.getElementById('pct').textContent=Math.round(v/total*100)+'%';}
 let toastT;
