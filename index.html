@@ -436,6 +436,9 @@ body.advanced #cb-tutorial:hover{border-color:rgba(0,240,255,.78);color:rgba(0,2
       <button class="cb" id="cb-route-mode">✈ Add Route</button>
       <button class="cb" id="cb-journey">▶ Journey</button>
       <button class="cb" id="cb-tutorial">⦿ Tutorial</button>
+      <button class="cb" id="cb-save-file">💾 Export</button>
+      <button class="cb" id="cb-load-file">📂 Import</button>
+      <input type="file" id="file-inp" accept=".wmk,.json" style="display:none">
     </div>
     <div class="legend">
       <div class="li"><div class="ld" style="background:#192c16;border:1px solid #2a4020"></div>Unvisited</div>
@@ -1350,6 +1353,94 @@ document.getElementById('tut-next').addEventListener('click', () => {
 document.getElementById('tut-finish').addEventListener('click', endTutorial);
 document.addEventListener('keydown', e => {
   if (tutActive && e.key === 'Escape') endTutorial();
+});
+
+// ════════════════════════════════════════════════
+// EXPORT / IMPORT  (.wmk — WanderMark travel file)
+// ════════════════════════════════════════════════
+
+// ── Helper: count photos across all visited countries ──
+function countPhotos() {
+  return Object.values(S.visited).reduce((n, v) => n + (v.photos ? v.photos.length : 0), 0);
+}
+
+// ── Export: serialise full state (photos included as compressed base64) ──
+document.getElementById('cb-save-file').addEventListener('click', () => {
+  const payload = JSON.stringify({
+    app: 'WanderMark',
+    version: 1,
+    exported: new Date().toISOString(),
+    countries: Object.keys(S.visited).length,
+    homes: Object.keys(S.homes).length,
+    routes: S.routes.length,
+    photos: countPhotos(),
+    data: S
+  });
+  const blob = new Blob([payload], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `wandermark-${new Date().toISOString().slice(0, 10)}.wmk`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  const kb = Math.round(blob.size / 1024);
+  toast(`Exported ${Object.keys(S.visited).length} countries · ${kb} KB ✦`);
+});
+
+// ── Import: read .wmk / .json file, validate, apply & redraw ──
+document.getElementById('cb-load-file').addEventListener('click', () => {
+  document.getElementById('file-inp').click();
+});
+
+document.getElementById('file-inp').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    try {
+      const parsed = JSON.parse(evt.target.result);
+      // Accept both a wrapped WanderMark export { app, version, data } and
+      // a raw state object { visited, homes, routes } for forwards compat.
+      const incoming = (parsed.app === 'WanderMark' && parsed.data) ? parsed.data : parsed;
+      if (
+        typeof incoming !== 'object' ||
+        typeof incoming.visited !== 'object' ||
+        typeof incoming.homes   !== 'object' ||
+        !Array.isArray(incoming.routes)
+      ) throw new Error('Unrecognised file structure');
+
+      // Normalise any legacy entries that might lack photos/notes fields
+      Object.keys(incoming.visited).forEach(id => {
+        const v = incoming.visited[id];
+        if (!v.photos) v.photos = [];
+        if (!v.notes)  v.notes  = '';
+        if (!v.date)   v.date   = '';
+      });
+
+      S = incoming;
+      save();                       // persist to localStorage on this device
+      updateStats();
+      _minimapDirty = true;
+      _visitRanksCache = null;
+      _routeLineCache.clear();      // routes may have changed
+
+      // Refresh sidebar if a country is already open
+      if (selId !== null && document.getElementById('sidebar').classList.contains('open')) {
+        selectCountry(selId);
+      }
+
+      const v = Object.keys(S.visited).length;
+      const p = countPhotos();
+      toast(`Loaded ${v} countr${v !== 1 ? 'ies' : 'y'} · ${p} photo${p !== 1 ? 's' : ''} ✦`);
+    } catch (err) {
+      toast('⚠ Could not read file — is it a valid .wmk?');
+      console.error('WanderMark import error:', err);
+    }
+    e.target.value = ''; // reset so same file can be re-loaded if needed
+  };
+  reader.readAsText(file);
 });
 
 window.addEventListener('resize',()=>{sizeCanvas();journeyGlobeShift=0;updateProjectionLayout(true);initStars();syncZoomBar();if(tutActive)tutPlace();});
