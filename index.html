@@ -634,10 +634,11 @@ function drawMinimap(){if(!countries.length)return;const adv=currentMode==='adva
 if(_minimapDirty||!_minimapCountriesCanvas){
   if(!_minimapCountriesCanvas){_minimapCountriesCanvas=document.createElement('canvas');_minimapCountriesCanvas.width=MINI_W;_minimapCountriesCanvas.height=MINI_H;}
   const mctx=_minimapCountriesCanvas.getContext('2d');
+  const mPath=d3.geoPath(miniProj,mctx);
   mctx.clearRect(0,0,MINI_W,MINI_H);
   mctx.fillStyle=adv?'#020508':'#061428';mctx.fillRect(0,0,MINI_W,MINI_H);
-  countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id];mctx.beginPath();miniPath(c);if(hom)mctx.fillStyle=adv?'rgba(255,0,200,.55)':'#7a5018';else if(vis)mctx.fillStyle=adv?'rgba(0,200,255,.45)':'#3a5e24';else mctx.fillStyle=adv?'rgba(0,25,40,.8)':'#192c16';mctx.fill();mctx.strokeStyle=adv?'rgba(0,200,255,.2)':'rgba(30,55,26,.9)';mctx.lineWidth=.3;mctx.stroke();});
-  if(showRts){S.routes.forEach(rt=>{const cached=getRouteLine(rt.from,rt.to);if(!cached)return;mctx.save();mctx.beginPath();miniPath(cached.line);mctx.strokeStyle=adv?'rgba(255,80,200,.5)':'rgba(212,114,48,.55)';mctx.lineWidth=.8;mctx.stroke();mctx.restore();});}
+  countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id];mctx.beginPath();mPath(c);if(hom)mctx.fillStyle=adv?'rgba(255,0,200,.55)':'#7a5018';else if(vis)mctx.fillStyle=adv?'rgba(0,200,255,.45)':'#3a5e24';else mctx.fillStyle=adv?'rgba(0,25,40,.8)':'#192c16';mctx.fill();mctx.strokeStyle=adv?'rgba(0,200,255,.2)':'rgba(30,55,26,.9)';mctx.lineWidth=.3;mctx.stroke();});
+  if(showRts){S.routes.forEach(rt=>{const cached=getRouteLine(rt.from,rt.to);if(!cached)return;mctx.save();mctx.beginPath();mPath(cached.line);mctx.strokeStyle=adv?'rgba(255,80,200,.5)':'rgba(212,114,48,.55)';mctx.lineWidth=.8;mctx.stroke();mctx.restore();});}
   _minimapDirty=false;
 }
 // Blit static layer, then draw dynamic view indicator on top
