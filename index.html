@@ -234,13 +234,13 @@ body.advanced .vd-rank-hint{color:rgba(0,240,255,.3)}
 #jc-globe-dot{transition:cx .4s ease,cy .4s ease;}
 #jc-globe-ripple{transform-box:fill-box;transform-origin:center;animation:jcRipple 2.2s ease-out infinite;}
 @keyframes jcRipple{0%{r:6;opacity:.7}100%{r:26;opacity:0}}
-.jc-photo-line{stroke-dasharray:6 5;animation:jcFlow 2s linear infinite;filter:url(#jsvg-glow);}
+.jc-photo-line{stroke-dasharray:6 5;animation:jcFlow 2s linear infinite;}
 @keyframes jcFlow{from{stroke-dashoffset:22}to{stroke-dashoffset:0}}
 #journey-vignette{position:fixed;inset:0;z-index:76;pointer-events:none;background:radial-gradient(ellipse at 38% 50%,transparent 28%,rgba(4,10,20,.55) 70%,rgba(2,6,14,.88) 100%);opacity:0;transition:opacity .8s;}
 body.advanced #journey-vignette{background:radial-gradient(ellipse at 38% 50%,transparent 26%,rgba(0,4,10,.6) 68%,rgba(0,2,8,.92) 100%);}
 #journey-vignette.active{opacity:1}
-#journey-hero{position:fixed;top:28px;left:28px;z-index:82;pointer-events:none;display:flex;flex-direction:column;gap:0;background:rgba(4,10,22,.88);border:1px solid rgba(196,146,42,.28);border-radius:3px 18px 18px 18px;padding:0;backdrop-filter:blur(28px);box-shadow:0 16px 60px rgba(0,0,0,.5),0 0 0 1px rgba(196,146,42,.08);max-width:300px;min-width:220px;overflow:hidden;opacity:0;transform:translateY(-16px) scale(.97);transition:opacity .45s cubic-bezier(.2,.8,.2,1),transform .45s cubic-bezier(.2,.8,.2,1);}
-body.advanced #journey-hero{background:rgba(0,6,16,.9);border-color:rgba(0,240,255,.22);box-shadow:0 16px 60px rgba(0,0,0,.6),0 0 30px rgba(0,240,255,.07);}
+#journey-hero{position:fixed;top:28px;left:28px;z-index:82;pointer-events:none;display:flex;flex-direction:column;gap:0;background:rgba(4,10,22,.97);border:1px solid rgba(196,146,42,.28);border-radius:3px 18px 18px 18px;padding:0;box-shadow:0 16px 60px rgba(0,0,0,.5),0 0 0 1px rgba(196,146,42,.08);max-width:300px;min-width:220px;overflow:hidden;opacity:0;transform:translateY(-16px) scale(.97);transition:opacity .45s cubic-bezier(.2,.8,.2,1),transform .45s cubic-bezier(.2,.8,.2,1);}
+body.advanced #journey-hero{background:rgba(0,6,16,.97);border-color:rgba(0,240,255,.22);box-shadow:0 16px 60px rgba(0,0,0,.6),0 0 30px rgba(0,240,255,.07);}
 #journey-hero.vis{opacity:1;transform:translateY(0) scale(1)}
 #jh-stripe{height:3px;background:linear-gradient(to right,var(--accent),rgba(196,146,42,.2),transparent);}
 body.advanced #jh-stripe{background:linear-gradient(to right,#00F0FF,rgba(0,240,255,.15),transparent);}
@@ -260,8 +260,8 @@ body.advanced #jh-divider{background:linear-gradient(to right,rgba(0,240,255,.22
 body.advanced #journey-cname{font-family:'Orbitron',monospace;font-size:.9rem;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:#00F0FF;text-shadow:0 0 16px rgba(0,240,255,.4);}
 #journey-cdate{font-size:.56rem;color:rgba(196,146,42,.65);letter-spacing:.2em;text-transform:uppercase;font-family:var(--font-body);padding-top:2px;}
 body.advanced #journey-cdate{color:rgba(0,240,255,.38);}
-#journey-bubble{position:fixed;bottom:92px;left:28px;z-index:82;pointer-events:none;max-width:300px;min-width:180px;background:rgba(4,10,22,.88);border:1px solid rgba(196,146,42,.2);border-left:3px solid var(--accent);border-radius:0 12px 12px 0;padding:14px 18px 16px;backdrop-filter:blur(22px);box-shadow:0 8px 40px rgba(0,0,0,.45);display:none;opacity:0;transform:translateY(10px);transition:opacity .4s .15s,transform .4s .15s;}
-body.advanced #journey-bubble{background:rgba(0,6,16,.9);border-color:rgba(0,240,255,.15);border-left-color:#00F0FF;box-shadow:0 8px 40px rgba(0,0,0,.5),0 0 20px rgba(0,240,255,.05);}
+#journey-bubble{position:fixed;bottom:92px;left:28px;z-index:82;pointer-events:none;max-width:300px;min-width:180px;background:rgba(4,10,22,.97);border:1px solid rgba(196,146,42,.2);border-left:3px solid var(--accent);border-radius:0 12px 12px 0;padding:14px 18px 16px;box-shadow:0 8px 40px rgba(0,0,0,.45);display:none;opacity:0;transform:translateY(10px);transition:opacity .4s .15s,transform .4s .15s;}
+body.advanced #journey-bubble{background:rgba(0,6,16,.97);border-color:rgba(0,240,255,.15);border-left-color:#00F0FF;box-shadow:0 8px 40px rgba(0,0,0,.5),0 0 20px rgba(0,240,255,.05);}
 #journey-bubble.vis{display:block}
 #journey-bubble.anim{opacity:1;transform:translateY(0)}
 #jb-label{font-size:.46rem;letter-spacing:.26em;text-transform:uppercase;color:var(--accent);margin-bottom:9px;font-family:var(--font-body);display:flex;align-items:center;gap:6px;}
@@ -281,14 +281,14 @@ body.advanced #journey-notes-txt{font-family:'Share Tech Mono',monospace;font-si
 body.advanced .jp-polaroid{background:rgba(0,24,42,.6);border-color:rgba(0,240,255,.2);box-shadow:0 8px 28px rgba(0,0,0,.65),0 0 18px rgba(0,240,255,.07);}
 .jp-polaroid:hover{transform:rotate(0deg) scale(1.05)!important;box-shadow:0 16px 44px rgba(0,0,0,.7),0 4px 14px rgba(0,0,0,.4);z-index:10;position:relative;}
 body.advanced .jp-polaroid:hover{box-shadow:0 16px 44px rgba(0,0,0,.75),0 0 28px rgba(0,240,255,.18);}
-.jp-polaroid img{width:100%;height:100px;object-fit:cover;display:block;border-radius:1px;filter:brightness(.94) contrast(1.04) saturate(1.08);}
+.jp-polaroid img{width:100%;height:100px;object-fit:cover;display:block;border-radius:1px;}
 .jp-polaroid-caption{text-align:center;font-size:.42rem;letter-spacing:.18em;text-transform:uppercase;color:rgba(200,220,240,.25);padding-top:7px;font-family:var(--font-body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 body.advanced .jp-polaroid-caption{color:rgba(0,240,255,.2);}
 .jp-no-photos-msg{display:flex;align-items:center;justify-content:center;grid-column:1/-1;font-size:.52rem;color:var(--txt-d);letter-spacing:.16em;text-transform:uppercase;text-align:center;border:1px dashed rgba(196,146,42,.15);border-radius:8px;padding:28px 20px;min-height:160px;}
 body.advanced .jp-no-photos-msg{border-color:rgba(0,240,255,.1);}
 @keyframes polaroidIn{from{opacity:0;transform:rotate(var(--card-rot)) translateY(18px) scale(.88)}to{opacity:1;transform:rotate(var(--card-rot)) translateY(0) scale(1)}}
-#journey-controls-bar{position:fixed;bottom:0;left:0;right:0;z-index:85;pointer-events:all;background:rgba(4,10,20,.92);border-top:1px solid rgba(196,146,42,.18);backdrop-filter:blur(20px);opacity:0;transform:translateY(16px);transition:opacity .4s .2s,transform .4s .2s;display:none;}
-body.advanced #journey-controls-bar{background:rgba(0,4,12,.94);border-top-color:rgba(0,240,255,.15);box-shadow:0 -8px 40px rgba(0,0,0,.3);}
+#journey-controls-bar{position:fixed;bottom:0;left:0;right:0;z-index:85;pointer-events:all;background:rgba(4,10,20,.97);border-top:1px solid rgba(196,146,42,.18);opacity:0;transform:translateY(16px);transition:opacity .4s .2s,transform .4s .2s;display:none;}
+body.advanced #journey-controls-bar{background:rgba(0,4,12,.98);border-top-color:rgba(0,240,255,.15);box-shadow:0 -8px 40px rgba(0,0,0,.3);}
 #journey-controls-bar.vis{display:block}
 #journey-controls-bar.anim{opacity:1;transform:translateY(0)}
 #journey-prog-bar{height:2px;background:rgba(255,255,255,.06);position:relative;overflow:hidden;}
@@ -578,11 +578,11 @@ let _routeLineCache=new Map();   // 'from:to' → {fc,tc,line} — never changes
 let _minimapCountriesCanvas=null; // offscreen cache for static minimap layer
 let _minimapDirty=true;           // rebuild minimap country layer on next draw
 let _lastTooltipCheck=0;          // throttle mousemove geoContains to ~30fps
-// ── Journey connector caches — eliminates per-frame DOM queries & getBoundingClientRect reflows ──
+// ── Journey connector caches — eliminates per-frame DOM queries & layout reflows ──
 let _jsvgDot=null,_jsvgRipple=null,_jsvgLines=[];
-let _jCardRects=[];        // cached polaroid card bounding rects
-let _jCardRectsDirty=true; // invalidated on new step or window resize
-let _jConnLastUpdate=0;    // throttle connector SVG updates to ~15fps
+let _jCardRects=[],_jCardRectsDirty=true;
+let _jConnLastUpdate=0; // throttle SVG connector updates to ~15fps
+let _jCanvasRect=null,_jCanvasRectDirty=true; // cache gc.getBoundingClientRect()
 const save=()=>{_visitRanksCache=null;_minimapDirty=true;try{localStorage.setItem('wm4',JSON.stringify(S));}catch(e){}};
 const load=()=>{try{const d=localStorage.getItem('wm4');if(d)S=JSON.parse(d);}catch(e){}};
 load();
@@ -964,19 +964,17 @@ function createConnectorPaths(count){
   dot.id='jc-globe-dot';dot.setAttribute('r','5');dot.setAttribute('fill',dotColor);
   dot.setAttribute('opacity','0.9');dot.setAttribute('filter','url(#jsvg-dot-glow)');dot.style.display='none';
   svg.appendChild(dot);
-  // ── Cache element references so updateJourneyConnectors never queries the DOM ──
+  // Cache element refs — updateJourneyConnectors never queries DOM again
   _jsvgDot=dot;_jsvgRipple=ripple;_jsvgLines=[];
+  _jCardRects=[];_jCardRectsDirty=true;
   for(let i=0;i<count;i++){
     const path=document.createElementNS('http://www.w3.org/2000/svg','path');
     path.classList.add('jc-photo-line');path.setAttribute('fill','none');
     if(i===0){
-      // Globe → pic 1: keep original dotted amber/cyan animated line
       path.setAttribute('stroke',lineColor);
       path.setAttribute('stroke-width','1.4');
       path.setAttribute('stroke-dasharray','6 5');
-      // animation and filter come from the CSS class .jc-photo-line
     }else{
-      // Pic → next pic: solid red string, no animation
       path.setAttribute('stroke','rgba(210,35,35,0.88)');
       path.setAttribute('stroke-width','2');
       path.removeAttribute('stroke-dasharray');
@@ -987,8 +985,6 @@ function createConnectorPaths(count){
     path.style.display='none';svg.appendChild(path);
     _jsvgLines.push(path);
   }
-  // Cards not yet in DOM — mark rects dirty so they're read after reveal
-  _jCardRects=[];_jCardRectsDirty=true;
 }
 
 function updateJourneyConnectors(){
@@ -998,7 +994,7 @@ function updateJourneyConnectors(){
     _jsvgLines.forEach(l=>l.style.display='none');
     return;
   }
-  // ── Throttle to ~15fps — SVG overlay lines don't need 60fps ──
+  // Throttle SVG updates to ~15fps — overlay lines don't need 60fps
   const _tnow=performance.now();
   if(_tnow-_jConnLastUpdate<66)return;
   _jConnLastUpdate=_tnow;
@@ -1013,40 +1009,32 @@ function updateJourneyConnectors(){
     return;
   }
   const globePos=proj(cen);if(!globePos)return;
-  const canvasRect=gc.getBoundingClientRect();
-  const gsx=canvasRect.left+globePos[0];
-  const gsy=canvasRect.top+globePos[1];
+  // Use cached canvas rect — only re-read on resize
+  if(_jCanvasRectDirty||!_jCanvasRect){_jCanvasRect=gc.getBoundingClientRect();_jCanvasRectDirty=false;}
+  const gsx=_jCanvasRect.left+globePos[0];
+  const gsy=_jCanvasRect.top+globePos[1];
   if(_jsvgDot){_jsvgDot.setAttribute('cx',gsx);_jsvgDot.setAttribute('cy',gsy);_jsvgDot.style.display='';}
   if(_jsvgRipple){_jsvgRipple.setAttribute('cx',gsx);_jsvgRipple.setAttribute('cy',gsy);_jsvgRipple.style.display='';}
-
-  // ── Refresh card rects only when dirty (new step or resize) ──
+  // Refresh card rects only when dirty (new step or resize) — not every frame
   if(_jCardRectsDirty||_jCardRects.length===0){
     const cards=document.querySelectorAll('.jp-polaroid');
-    if(cards.length>0){
-      _jCardRects=Array.from(cards).map(c=>c.getBoundingClientRect());
-      _jCardRectsDirty=false;
-    }
+    if(cards.length>0){_jCardRects=Array.from(cards).map(c=>c.getBoundingClientRect());_jCardRectsDirty=false;}
   }
-
   _jsvgLines.forEach((line,i)=>{
     const rect=_jCardRects[i];
     if(!rect||rect.width===0){line.style.display='none';return;}
     const tx=rect.left+2,ty=rect.top+rect.height*0.38;
     let sx,sy;
     if(i===0){
-      // Globe → pic 1 line only appears after the globe finishes flying
       if(journeyFlying){line.style.display='none';return;}
       sx=gsx;sy=gsy;
     }else{
       const prevRect=_jCardRects[i-1];
       if(!prevRect||prevRect.width===0){line.style.display='none';return;}
-      sx=prevRect.right-2;
-      sy=prevRect.top+prevRect.height*0.38;
+      sx=prevRect.right-2;sy=prevRect.top+prevRect.height*0.38;
     }
     const dx=tx-sx,dy=ty-sy;
-    const cp1x=sx+dx*0.42,cp1y=sy+dy*0.05;
-    const cp2x=tx-dx*0.18,cp2y=ty-dy*0.05;
-    line.setAttribute('d',`M ${sx} ${sy} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${tx} ${ty}`);
+    line.setAttribute('d',`M ${sx} ${sy} C ${sx+dx*0.42} ${sy+dy*0.05} ${tx-dx*0.18} ${ty-dy*0.05} ${tx} ${ty}`);
     line.style.display='';
   });
 }
@@ -1077,7 +1065,7 @@ function endJourney(){
   // EDIT 1: Clean up flying state
   clearTimeout(journeyFlyingTimer);journeyFlying=false;
   photoRevealTimeouts.forEach(t=>clearTimeout(t));photoRevealTimeouts=[];
-  cancelAnimationFrame(journeyArcAnimId);journeyArcProgress=0;journeyArcFromId=null;journeyArcToId=null;
+  journeyArcFromId=null;journeyArcStart=0;journeyArcDur=0;
   document.getElementById('journey-vignette').classList.remove('active');
   document.getElementById('journey-svg').classList.remove('active');
   document.getElementById('journey-hero').classList.remove('vis');
@@ -1086,7 +1074,6 @@ function endJourney(){
   document.getElementById('journey-controls-bar').classList.remove('vis','anim');
   const svg=document.getElementById('journey-svg');
   svg.querySelectorAll('.jc-photo-line,#jc-globe-dot,#jc-globe-ripple').forEach(el=>el.remove());
-  // Clear cached SVG element refs
   _jsvgDot=null;_jsvgRipple=null;_jsvgLines=[];_jCardRects=[];_jCardRectsDirty=true;
   hlId=selId;
 }
@@ -1142,10 +1129,8 @@ function journeyGo(idx){
       },i*160);
       photoRevealTimeouts.push(t);
     });
-    // Once all cards are in the DOM and their reveal animation has started,
-    // cache their bounding rects in one batch (avoids per-frame reflows)
-    const finalDelay=photos.length*160+400;
-    photoRevealTimeouts.push(setTimeout(()=>{_jCardRectsDirty=true;},finalDelay));
+    // After all cards have animated in, cache their rects once (avoids mid-animation reflows)
+    photoRevealTimeouts.push(setTimeout(()=>{_jCardRectsDirty=true;},photos.length*160+400));
   }else{
     const ph=document.createElement('div');ph.className='jp-no-photos-msg';ph.textContent='No photos for this visit';strip.appendChild(ph);
     createConnectorPaths(0);
@@ -1182,10 +1167,15 @@ function showZoomBar(){syncZoomBar();zoomWrap.classList.add('visible');clearTime
 zoomRange.addEventListener('input',()=>{scl=sliderToScl(+zoomRange.value);proj.scale(scl);zoomPct.textContent=Math.round(scl/R*100)+'%';clearTimeout(zoomHideTimer);zoomHideTimer=setTimeout(()=>zoomWrap.classList.remove('visible'),2400);});
 document.getElementById('zb-out').addEventListener('click',()=>{scl=Math.max(zoomMin(),scl/1.35);proj.scale(scl);showZoomBar();});
 document.getElementById('zb-in').addEventListener('click',()=>{scl=Math.min(zoomMax(),scl*1.35);proj.scale(scl);showZoomBar();});
-let journeyArcProgress=0,journeyArcFromId=null,journeyArcToId=null,journeyArcAnimId=null;
-function drawJourneyRoutes(){if(!journeyActive||journeyList.length<2)return;const adv=currentMode==='advanced';const dashOff=-(now()/70)%20;for(let i=0;i<journeyIdx&&i<journeyList.length-1;i++){drawJourneyArc(journeyList[i].id,journeyList[i+1].id,1,adv,dashOff);}if(journeyIdx>0&&journeyArcProgress<1&&journeyArcFromId!=null){drawJourneyArc(journeyArcFromId,journeyArcToId,journeyArcProgress,adv,dashOff);}}
-function drawJourneyArc(fromId,toId,progress,adv,dashOff){const fc=centroid(fromId),tc=centroid(toId);if(!fc||!tc)return;const totalPts=61;const visiblePts=Math.max(2,Math.round(progress*totalPts));const pts=d3.range(visiblePts).map(i=>d3.geoInterpolate(fc,tc)(i/(totalPts-1)));const line={type:'LineString',coordinates:pts};gx.save();if(adv){gx.shadowColor='rgba(255,120,0,.9)';gx.shadowBlur=10;}else{gx.shadowColor='rgba(220,160,30,.6)';gx.shadowBlur=8;}gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);if(adv){g.addColorStop(0,'rgba(255,80,200,.9)');g.addColorStop(.5,'rgba(255,140,0,1)');g.addColorStop(1,'rgba(0,240,255,.9)');}else{g.addColorStop(0,'rgba(232,184,76,.9)');g.addColorStop(.5,'rgba(212,114,48,1)');g.addColorStop(1,'rgba(196,146,42,.9)');}gx.strokeStyle=g;}gx.lineWidth=2.2;gx.setLineDash([6,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach((pt,pi)=>{if(pi===1&&progress<1)return;const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor=adv?'rgba(255,140,0,1)':'rgba(220,160,30,.9)';gx.shadowBlur=12;gx.beginPath();gx.arc(p[0],p[1],4,0,Math.PI*2);gx.fillStyle=adv?'#FF8800':'#e8b84c';gx.fill();gx.restore();});gx.restore();}
-function startJourneyArcAnim(fromId,toId,dur){cancelAnimationFrame(journeyArcAnimId);journeyArcFromId=fromId;journeyArcToId=toId;journeyArcProgress=0;const t0=now();(function step(){journeyArcProgress=Math.min(1,(now()-t0)/dur);if(journeyArcProgress<1)journeyArcAnimId=requestAnimationFrame(step);})();}
+// Arc animation driven by timestamps — NO separate rAF loop
+let journeyArcStart=0,journeyArcDur=0,journeyArcFromId=null,journeyArcToId=null;
+// Geodesic arc point cache — built once per country pair, reused every frame
+let _journeyArcCache=new Map();
+function drawJourneyRoutes(){if(!journeyActive||journeyList.length<2)return;const adv=currentMode==='advanced';const dashOff=-(now()/70)%20;for(let i=0;i<journeyIdx&&i<journeyList.length-1;i++){drawJourneyArc(journeyList[i].id,journeyList[i+1].id,1,adv,dashOff);}if(journeyIdx>0&&journeyArcFromId!=null){const arcProg=Math.min(1,journeyArcDur>0?(now()-journeyArcStart)/journeyArcDur:1);if(arcProg<1)drawJourneyArc(journeyArcFromId,journeyArcToId,arcProg,adv,dashOff);}}
+function getJourneyArcCached(fromId,toId){const key=`${fromId}:${toId}`;if(_journeyArcCache.has(key))return _journeyArcCache.get(key);const fc=centroid(fromId),tc=centroid(toId);if(!fc||!tc)return null;const interp=d3.geoInterpolate(fc,tc);const pts=d3.range(61).map(i=>interp(i/60));const entry={pts,line:{type:'LineString',coordinates:pts},fc,tc};_journeyArcCache.set(key,entry);return entry;}
+function drawJourneyArc(fromId,toId,progress,adv,dashOff){const cached=getJourneyArcCached(fromId,toId);if(!cached)return;const{fc,tc}=cached;// Completed arcs reuse the cached LineString — zero allocations. Animating arc slices once.
+const line=progress>=1?cached.line:{type:'LineString',coordinates:cached.pts.slice(0,Math.max(2,Math.round(progress*61)))};gx.save();if(adv){gx.shadowColor='rgba(255,120,0,.9)';gx.shadowBlur=10;}else{gx.shadowColor='rgba(220,160,30,.6)';gx.shadowBlur=8;}gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);if(adv){g.addColorStop(0,'rgba(255,80,200,.9)');g.addColorStop(.5,'rgba(255,140,0,1)');g.addColorStop(1,'rgba(0,240,255,.9)');}else{g.addColorStop(0,'rgba(232,184,76,.9)');g.addColorStop(.5,'rgba(212,114,48,1)');g.addColorStop(1,'rgba(196,146,42,.9)');}gx.strokeStyle=g;}gx.lineWidth=2.2;gx.setLineDash([6,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach((pt,pi)=>{if(pi===1&&progress<1)return;const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor=adv?'rgba(255,140,0,1)':'rgba(220,160,30,.9)';gx.shadowBlur=12;gx.beginPath();gx.arc(p[0],p[1],4,0,Math.PI*2);gx.fillStyle=adv?'#FF8800':'#e8b84c';gx.fill();gx.restore();});gx.restore();}
+function startJourneyArcAnim(fromId,toId,dur){journeyArcFromId=fromId;journeyArcToId=toId;journeyArcStart=now();journeyArcDur=dur;}
 
 // ════════════════════════════════════════════════
 // TUTORIAL SYSTEM
@@ -1468,7 +1458,7 @@ document.getElementById('file-inp').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
-window.addEventListener('resize',()=>{sizeCanvas();journeyGlobeShift=0;updateProjectionLayout(true);initStars();syncZoomBar();if(tutActive)tutPlace();_jCardRectsDirty=true;});
+window.addEventListener('resize',()=>{sizeCanvas();journeyGlobeShift=0;updateProjectionLayout(true);initStars();syncZoomBar();if(tutActive)tutPlace();_jCanvasRectDirty=true;_jCardRectsDirty=true;});
 initStars();
 loadWorld();
 </script>
