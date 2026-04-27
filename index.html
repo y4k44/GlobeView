@@ -583,6 +583,46 @@ let _jsvgDot=null,_jsvgRipple=null,_jsvgLines=[];
 let _jCardRects=[],_jCardRectsDirty=true;
 let _jConnLastUpdate=0; // throttle SVG connector updates to ~15fps
 let _jCanvasRect=null,_jCanvasRectDirty=true; // cache gc.getBoundingClientRect()
+// ── Safari-safe gradient caches — recreate only when CX/CY/scl changes ─────
+let _explorerGradCache=null,_explorerGradKey='';
+let _advOceanGradCache=null,_advOceanGradKey='';
+// ── Area coverage ring ────────────────────────────────────────────────────────
+let _areaRingAnim=0; // smoothed 0..1, drives ring sweep + thickness
+// Land area in km² keyed by numeric ISO id (matches CD lookup above)
+const EARTH_LAND_KM2=148940000;
+const COUNTRY_AREAS={
+  4:652230,8:28748,12:2381741,20:468,24:1246700,28:443,32:2780400,36:7692024,
+  40:83871,31:86600,44:13943,48:765,50:147570,52:430,112:207600,56:30528,
+  84:22966,204:112622,64:38394,68:1098581,70:51197,72:581730,76:8515767,
+  96:5765,100:110879,854:272967,108:27830,116:181035,120:475442,124:9984670,
+  132:4033,140:622984,148:1284000,152:756102,156:9596960,170:1141748,174:2235,
+  178:342000,180:2344858,188:51100,384:322463,191:56594,192:109884,196:9251,
+  203:78866,208:43094,262:23200,214:48670,218:283561,818:1002450,222:21041,
+  226:28051,232:117600,233:45228,748:17364,231:1104300,242:18274,246:338145,
+  250:551695,266:267668,270:11295,268:69700,276:357114,288:238533,300:131957,
+  320:108889,324:245857,624:36125,328:214969,332:27750,340:112492,348:93028,
+  352:103000,356:3287263,360:1904569,364:1648195,368:438317,372:70273,376:20770,
+  380:301340,388:10991,392:377930,400:89342,398:2724900,404:580367,296:811,
+  383:10887,414:17818,417:199951,418:236800,422:10452,426:30355,430:111369,
+  434:1759540,438:160,440:65300,442:2586,450:587041,454:118484,458:329847,
+  462:298,466:1240192,470:316,584:181,478:1030700,480:2040,484:1964375,
+  583:702,498:33846,492:2,496:1564116,499:13812,504:446550,508:801590,
+  104:676578,516:824292,524:147181,528:41543,554:270467,558:130373,562:1267000,
+  566:923768,807:25713,408:120538,578:323802,512:309500,586:881913,585:459,
+  275:6020,591:75417,598:462840,600:406752,604:1285216,608:300000,616:312685,
+  620:92212,634:11586,642:238397,643:17098242,646:26338,659:261,670:389,
+  882:2842,674:61,678:964,682:2149690,686:196722,688:77474,694:71740,702:728,
+  703:48845,705:20273,90:28896,706:637657,710:1219090,728:619745,410:100210,
+  724:505990,144:65610,729:1886068,740:163820,752:450295,756:41285,760:185180,
+  762:143100,834:945087,764:513120,626:14874,768:56785,776:747,780:5130,
+  788:163610,792:783562,795:488100,800:241038,804:603550,784:83600,826:242495,
+  840:9833517,858:176215,860:447400,548:12189,336:1,862:912050,704:331212,
+  887:527968,894:752612,716:390757,158:35980,304:2166086,344:1106,446:30,
+  630:9104,732:266000,254:83534,258:4167,540:18575,474:1128,312:1628,
+  638:2511,175:374,654:394,238:12173,234:1393,292:7,60:54,136:264,
+  796:948,850:347,316:544,16:199,570:260,184:236
+};
+function getTotalVisitedArea(){return Object.keys(S.visited).reduce((s,id)=>s+(COUNTRY_AREAS[+id]||0),0);}
 const save=()=>{_visitRanksCache=null;_minimapDirty=true;try{localStorage.setItem('wm4',JSON.stringify(S));}catch(e){}};
 const load=()=>{try{const d=localStorage.getItem('wm4');if(d)S=JSON.parse(d);}catch(e){}};
 load();
@@ -636,7 +676,107 @@ buildColCaches();
 setupSearch([...countries].sort((a,b)=>getName(a.id).localeCompare(getName(b.id))));updateStats();startRender();}catch(e){toast('⚠ Could not load map.');console.error(e);}}
 const now=()=>performance.now();
 let lastT=0;
-function draw(){gx.clearRect(0,0,GW,GH);gx.save();gx.beginPath();gx.arc(CX,CY,scl+1,0,Math.PI*2);gx.clip();if(currentMode==='advanced')drawAdvanced();else drawExplorer();gx.restore();drawMinimap();}
+function draw(){gx.clearRect(0,0,GW,GH);gx.save();gx.beginPath();gx.arc(CX,CY,scl+1,0,Math.PI*2);gx.clip();if(currentMode==='advanced')drawAdvanced();else drawExplorer();gx.restore();drawAreaRing();drawMinimap();}
+function drawAreaRing(){
+  if(journeyActive)return;
+  const adv=currentMode==='advanced';
+  const visitedKm2=getTotalVisitedArea();
+  const target=Math.min(1,visitedKm2/EARTH_LAND_KM2);
+
+  // Smooth lerp toward target — fast enough to feel snappy, slow enough to look animated
+  _areaRingAnim+=(_areaRingAnim<target?0.055:-0.055)*Math.max(0.0008,Math.abs(target-_areaRingAnim)*0.6);
+  if(Math.abs(target-_areaRingAnim)<0.0002)_areaRingAnim=target;
+  const f=_areaRingAnim;
+
+  // ── Geometry ────────────────────────────────────────────────────────────────
+  const gap=18;                         // px between globe edge and ring centre
+  const ringR=scl+gap;
+  const minThick=2.2;                   // track width (0 countries)
+  const maxThick=16;                    // full-planet width
+  const thick=minThick+(maxThick-minThick)*f;
+  const startAngle=-Math.PI/2;          // 12 o'clock
+  const sweepAngle=f*Math.PI*2;
+  const endAngle=startAngle+sweepAngle;
+
+  // ── Colour tokens ────────────────────────────────────────────────────────────
+  const trackCol  =adv?'rgba(0,240,255,.07)' :'rgba(196,146,42,.10)';
+  const arcColA   =adv?0.65+f*0.30          :0.72+f*0.22;           // opacity of the arc stroke
+  const arcStroke =adv?`rgba(0,240,255,${arcColA})`:`rgba(196,146,42,${arcColA})`;
+  const glowCol   =adv?'rgba(0,240,255,.55)' :'rgba(196,146,42,.45)';
+  const dotFill   =adv?'rgba(0,240,255,.95)' :'rgba(232,184,76,.95)';
+  const dotGlow   =adv?'rgba(0,240,255,1)'   :'rgba(196,146,42,.9)';
+  const labelFont =adv?`500 8.5px 'Share Tech Mono',monospace`:`500 8.5px 'Raleway',sans-serif`;
+  const microFont =adv?`400 6.8px 'Share Tech Mono',monospace`:`400 6.8px 'Raleway',sans-serif`;
+  const labelCol  =adv?`rgba(0,240,255,${0.45+f*0.4})`:`rgba(196,146,42,${0.5+f*0.38})`;
+  const microCol  =adv?'rgba(0,240,255,.28)' :'rgba(196,146,42,.32)';
+
+  gx.save();
+
+  // ── 1. Track ring (always visible, thin) ────────────────────────────────────
+  gx.beginPath();
+  gx.arc(CX,CY,ringR,0,Math.PI*2);
+  gx.strokeStyle=trackCol;
+  gx.lineWidth=minThick;
+  gx.stroke();
+
+  // ── 2. 12 o'clock tick mark (anchor) ────────────────────────────────────────
+  const tickInner=ringR-thick*0.5-3,tickOuter=ringR+thick*0.5+3;
+  gx.beginPath();
+  gx.moveTo(CX,CY-tickInner);
+  gx.lineTo(CX,CY-tickOuter);
+  gx.strokeStyle=adv?'rgba(0,240,255,.22)':'rgba(196,146,42,.2)';
+  gx.lineWidth=1.2;
+  gx.stroke();
+
+  if(f>0.0008){
+    // ── 3. Progress arc ────────────────────────────────────────────────────────
+    gx.lineCap='round';
+    gx.beginPath();
+    gx.arc(CX,CY,ringR,startAngle,endAngle);
+    gx.strokeStyle=arcStroke;
+    gx.shadowColor=glowCol;
+    gx.shadowBlur=5+f*9;
+    gx.lineWidth=thick;
+    gx.stroke();
+    gx.shadowBlur=0;
+    gx.lineCap='butt';
+
+    // ── 4. Leading-edge dot ────────────────────────────────────────────────────
+    const ex=CX+ringR*Math.cos(endAngle);
+    const ey=CY+ringR*Math.sin(endAngle);
+    gx.shadowColor=dotGlow;
+    gx.shadowBlur=10+f*6;
+    gx.beginPath();
+    gx.arc(ex,ey,thick*0.5+1.5,0,Math.PI*2);
+    gx.fillStyle=dotFill;
+    gx.fill();
+    gx.shadowBlur=0;
+  }
+
+  // ── 5. Label at 6 o'clock (below the ring) ──────────────────────────────────
+  const km2=visitedKm2;
+  const km2str=km2>=1e6?(km2/1e6).toFixed(1)+' M km²':km2>=1e3?Math.round(km2/1000)+' k km²':km2+' km²';
+  const pctStr=(target*100).toFixed(target<0.001?2:1)+'%';
+
+  // Position just outside the bottom of the ring, accounting for current thickness
+  const labelY=CY+ringR+thick*0.5+14;
+  const microY=labelY+13;
+
+  gx.textAlign='center';
+  gx.textBaseline='middle';
+
+  // micro label: "LAND AREA"
+  gx.font=microFont;
+  gx.fillStyle=microCol;
+  gx.fillText('LAND AREA',CX,microY);
+
+  // main label: the km² value
+  gx.font=labelFont;
+  gx.fillStyle=km2===0?microCol:labelCol;
+  gx.fillText(km2===0?'no data':km2str,CX,labelY);
+
+  gx.restore();
+}
 function drawMinimap(){if(!countries.length)return;const adv=currentMode==='advanced';
 // Rebuild static country+route layer only when data or mode changes
 if(_minimapDirty||!_minimapCountriesCanvas){
@@ -686,7 +826,18 @@ function buildColCaches(){
 function getRouteLine(from,to){const key=`${from}:${to}`;let cached=_routeLineCache.get(key);if(cached)return cached;const fc=centroid(from),tc=centroid(to);if(!fc||!tc)return null;const pts=d3.range(61).map(i=>d3.geoInterpolate(fc,tc)(i/60));cached={fc,tc,line:{type:'LineString',coordinates:pts}};_routeLineCache.set(key,cached);return cached;}
 function roundRect(ctx,x,y,w,h,r,fill,doStroke){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();if(fill){ctx.fillStyle=fill;ctx.fill();}if(doStroke)ctx.stroke();}
 function drawCountryIcons(){if(!countries.length)return;const adv=currentMode==='advanced';const ranks=getVisitRanks();countries.forEach(c=>{const id=+c.id;const data=S.visited[id];if(!data)return;const rank=ranks[id];const hasNotes=!!(data.notes&&data.notes.trim());const hasPhotos=!!(data.photos&&data.photos.length>0);if(!rank&&!hasNotes&&!hasPhotos)return;const cen=centroidMap.get(id);if(!cen)return;if(d3.geoDistance(cen,[-rot[0],-rot[1]])>Math.PI/2)return;const pos=proj(cen);if(!pos)return;const hasIcons=hasNotes||hasPhotos;const badgeH=rank?13:0;const iconsH=hasIcons?11:0;const gap=rank&&hasIcons?3:0;const totalH=badgeH+gap+iconsH;let y=pos[1]-totalH/2;if(rank){const num=String(rank);gx.save();gx.font=`bold 7.5px 'Share Tech Mono',monospace`;const tw=gx.measureText(num).width;const bw=Math.max(16,tw+10),bh=12,br=3;const bx=pos[0]-bw/2,by=y;if(adv){gx.shadowColor='rgba(0,240,255,.65)';gx.shadowBlur=9;}else{gx.shadowColor='rgba(196,146,42,.45)';gx.shadowBlur=6;}roundRect(gx,bx,by,bw,bh,br,'rgba(5,10,18,.92)');gx.strokeStyle=adv?'rgba(0,240,255,.72)':'rgba(196,146,42,.68)';gx.lineWidth=0.85;roundRect(gx,bx,by,bw,bh,br,null,true);gx.fillStyle=adv?'#00F0FF':'#d4a030';gx.textAlign='center';gx.textBaseline='middle';gx.fillText(num,pos[0],by+bh/2+0.5);gx.restore();y+=bh+gap;}if(hasIcons){const icons=[];if(hasNotes)icons.push({type:'notes'});if(hasPhotos)icons.push({type:'photos'});const spacing=13;const totalW=(icons.length-1)*spacing;const startX=pos[0]-totalW/2;const iy=y+5;icons.forEach((icon,i)=>{const ix=startX+i*spacing,r=5;if(icon.type==='notes'){const nc=adv?'rgba(255,180,0,.9)':'rgba(196,146,42,.9)';const nglow=adv?'rgba(255,180,0,.7)':'rgba(196,146,42,.55)';gx.save();gx.shadowColor=nglow;gx.shadowBlur=7;gx.beginPath();gx.arc(ix,iy,r,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.82)';gx.fill();gx.beginPath();gx.moveTo(ix,iy-3.2);gx.lineTo(ix+3,iy+2.2);gx.lineTo(ix-3,iy+2.2);gx.closePath();gx.fillStyle=nc;gx.fill();gx.restore();}else{const pc=adv?'rgba(0,200,255,.9)':'rgba(74,176,220,.9)';const pglow=adv?'rgba(0,200,255,.7)':'rgba(74,176,220,.55)';gx.save();gx.shadowColor=pglow;gx.shadowBlur=7;gx.beginPath();gx.arc(ix,iy,r,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.82)';gx.fill();gx.beginPath();gx.arc(ix,iy,3.2,0,Math.PI*2);gx.fillStyle=pc;gx.fill();gx.beginPath();gx.arc(ix,iy,1.3,0,Math.PI*2);gx.fillStyle='rgba(6,12,22,.75)';gx.fill();gx.restore();}});}})}
-function drawExplorer(){const t=now();const og=gx.createRadialGradient(CX-scl*.3,CY-scl*.3,scl*.04,CX,CY,scl);og.addColorStop(0,'#0e2848');og.addColorStop(.55,'#081a30');og.addColorStop(1,'#040d1c');gx.beginPath();pathGen(SPHERE);gx.fillStyle=og;gx.fill();if(showGrid){gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(30,70,120,.35)';gx.lineWidth=.3;gx.stroke();}
+function drawExplorer(){const t=now();
+// ── Rebuild static gradients only when projection geometry changes (Safari: avoid per-frame createRadialGradient) ──
+const _egk=`${CX},${CY},${scl}`;
+if(_egk!==_explorerGradKey||!_explorerGradCache){
+  const og=gx.createRadialGradient(CX-scl*.3,CY-scl*.3,scl*.04,CX,CY,scl);og.addColorStop(0,'#0e2848');og.addColorStop(.55,'#081a30');og.addColorStop(1,'#040d1c');
+  const sun=gx.createRadialGradient(CX-scl*.42,CY-scl*.42,0,CX-scl*.1,CY-scl*.1,scl*.85);sun.addColorStop(0,'rgba(255,250,220,.07)');sun.addColorStop(.5,'rgba(200,210,250,.02)');sun.addColorStop(1,'transparent');
+  const rim=gx.createRadialGradient(CX,CY,scl*.76,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(1,'rgba(10,40,120,.28)');
+  const spec=gx.createRadialGradient(CX-scl*.38,CY-scl*.38,0,CX-scl*.14,CY-scl*.14,scl*.7);spec.addColorStop(0,'rgba(255,255,255,.06)');spec.addColorStop(1,'transparent');
+  _explorerGradCache={og,sun,rim,spec};_explorerGradKey=_egk;
+}
+const{og,sun,rim,spec}=_explorerGradCache;
+gx.beginPath();pathGen(SPHERE);gx.fillStyle=og;gx.fill();if(showGrid){gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(30,70,120,.35)';gx.lineWidth=.3;gx.stroke();}
 // Two-pass rendering: fill all countries first (no shadow state changes),
 // then draw glowing countries in a single batched save/restore block.
 // This eliminates N GPU compositing flushes (one per visited country).
@@ -697,20 +848,26 @@ gx.fillStyle=fill;gx.fill();
 // Queue glow countries; stroke non-glow countries immediately
 if(sblur>0){glowList.push({c,fill,shadow,sblur,stroke,sw});}else{gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();}});
 // Glow pass — ONE save/restore wraps ALL glowing countries
-if(glowList.length){gx.save();glowList.forEach(({c,fill,shadow,sblur,stroke,sw})=>{gx.shadowColor=shadow;gx.shadowBlur=sblur;gx.beginPath();pathGen(c);gx.fillStyle=fill;gx.fill();gx.shadowBlur=0;gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();});gx.restore();}
-if(showRts)drawRoutesExplorer();if(journeyActive)drawJourneyRoutes();drawCountryIcons();const sun=gx.createRadialGradient(CX-scl*.42,CY-scl*.42,0,CX-scl*.1,CY-scl*.1,scl*.85);sun.addColorStop(0,'rgba(255,250,220,.07)');sun.addColorStop(.5,'rgba(200,210,250,.02)');sun.addColorStop(1,'transparent');gx.beginPath();pathGen(SPHERE);gx.fillStyle=sun;gx.fill();const rim=gx.createRadialGradient(CX,CY,scl*.76,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(1,'rgba(10,40,120,.28)');gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();const spec=gx.createRadialGradient(CX-scl*.38,CY-scl*.38,0,CX-scl*.14,CY-scl*.14,scl*.7);spec.addColorStop(0,'rgba(255,255,255,.06)');spec.addColorStop(1,'transparent');gx.beginPath();pathGen(SPHERE);gx.fillStyle=spec;gx.fill();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle='rgba(80,50,180,.04)';gx.fill();}}
+// Safari fix: shadow applied to stroke (small area) not fill (large polygon area) — major perf win
+if(glowList.length){gx.save();glowList.forEach(({c,fill,shadow,sblur,stroke,sw})=>{gx.beginPath();pathGen(c);gx.fillStyle=fill;gx.fill();gx.shadowColor=shadow;gx.shadowBlur=sblur;gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();gx.shadowBlur=0;});gx.restore();}
+if(showRts)drawRoutesExplorer();if(journeyActive)drawJourneyRoutes();drawCountryIcons();gx.beginPath();pathGen(SPHERE);gx.fillStyle=sun;gx.fill();gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();gx.beginPath();pathGen(SPHERE);gx.fillStyle=spec;gx.fill();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle='rgba(80,50,180,.04)';gx.fill();}}
 function drawRoutesExplorer(){const dashOff=-(now()/90)%20;S.routes.forEach(rt=>{const cached=getRouteLine(rt.from,rt.to);if(!cached)return;const{fc,tc,line}=cached;gx.save();gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);g.addColorStop(0,'rgba(220,160,30,.85)');g.addColorStop(.5,'rgba(212,114,48,.9)');g.addColorStop(1,'rgba(100,170,60,.85)');gx.strokeStyle=g;}else gx.strokeStyle='rgba(212,114,48,.8)';gx.lineWidth=1.5;gx.setLineDash([5,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach(pt=>{const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor='rgba(220,160,30,.8)';gx.shadowBlur=8;gx.beginPath();gx.arc(p[0],p[1],3.2,0,Math.PI*2);gx.fillStyle='#d4a020';gx.fill();gx.restore();});gx.restore();});}
-function drawAdvanced(){const t=now();spawnParticles();updateParticles();const og=gx.createRadialGradient(CX-scl*.2,CY-scl*.2,scl*.05,CX,CY,scl);og.addColorStop(0,'#04090f');og.addColorStop(.6,'#020508');og.addColorStop(1,'#010203');gx.beginPath();pathGen(SPHERE);gx.fillStyle=og;gx.fill();if(showGrid){gx.save();gx.shadowColor='rgba(0,240,255,.6)';gx.shadowBlur=6;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,200,255,.4)';gx.lineWidth=.5;gx.stroke();gx.restore();}else{gx.save();gx.shadowColor='rgba(0,180,255,.3)';gx.shadowBlur=3;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,150,200,.18)';gx.lineWidth=.3;gx.stroke();gx.restore();}
+function drawAdvanced(){const t=now();spawnParticles();updateParticles();
+// ── Cache static ocean gradient — only rebuild when layout changes (Safari perf) ──
+const _agk=`${CX},${CY},${scl}`;if(_agk!==_advOceanGradKey||!_advOceanGradCache){const og=gx.createRadialGradient(CX-scl*.2,CY-scl*.2,scl*.05,CX,CY,scl);og.addColorStop(0,'#04090f');og.addColorStop(.6,'#020508');og.addColorStop(1,'#010203');_advOceanGradCache=og;_advOceanGradKey=_agk;}
+gx.beginPath();pathGen(SPHERE);gx.fillStyle=_advOceanGradCache;gx.fill();if(showGrid){gx.save();gx.shadowColor='rgba(0,240,255,.6)';gx.shadowBlur=6;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,200,255,.4)';gx.lineWidth=.5;gx.stroke();gx.restore();}else{gx.save();gx.shadowColor='rgba(0,180,255,.3)';gx.shadowBlur=3;gx.beginPath();pathGen(gratic);gx.strokeStyle='rgba(0,150,200,.18)';gx.lineWidth=.3;gx.stroke();gx.restore();}
 // No per-country save/restore — eliminates ~200 GPU state copies per frame.
 // Shadow is set inline and explicitly reset to 0 before every stroke.
 countries.forEach(c=>{const id=+c.id,vis=!!S.visited[id],hom=!!S.homes[id],sel=id===hlId;const fl=animFlash[id];gx.beginPath();pathGen(c);let fill,stroke,sw,sblur=0,scolor='transparent';const pulse=Math.sin(t/600+id*0.7)*0.5+0.5;if(fl){const p=Math.min(1,(t-fl.start)/600),ease=Math.sin(p*Math.PI);if(hom){fill=`rgba(255,0,200,${0.05+ease*.3})`;stroke='#FF00CC';scolor='#FF00CC';sblur=20;}else if(vis){const cc=_neonColCache[id]||{hex:'#00F0FF',r:0,g:240,b:255,scolor:'#00F0FF'};fill=`rgba(${cc.r},${cc.g},${cc.b},${0.04+ease*.25})`;stroke=cc.hex;scolor=cc.scolor;sblur=18;}else{fill=`rgba(0,100,160,${ease*.2})`;stroke='rgba(0,200,255,.7)';scolor='rgba(0,200,255,.5)';sblur=12;}sw=1.6;if(p>=1)delete animFlash[id];}else if(hom){fill=`rgba(255,0,200,${0.04+pulse*.06})`;stroke='rgba(255,0,200,0.9)';scolor='#FF00CC';sblur=sel?18:10;sw=sel?1.8:1.2;}else if(vis){const cc=_neonColCache[id]||{hex:'#00F0FF',r:0,g:240,b:255,stroke75:'rgba(0,240,255,.75)',scolor:'#00F0FF'};fill=`rgba(${cc.r},${cc.g},${cc.b},${0.03+pulse*.05})`;stroke=sel?cc.hex:cc.stroke75;scolor=cc.scolor;sblur=sel?16:8;sw=sel?1.8:1.1;}else{fill='rgba(0,30,50,.35)';stroke=sel?'rgba(0,200,255,.7)':'rgba(0,160,200,.3)';scolor=sel?'rgba(0,200,255,.5)':'transparent';sblur=sel?6:0;sw=sel?.8:.4;}
-// Apply shadow only when needed, always reset before stroke
-if(sblur>0){gx.shadowColor=scolor;gx.shadowBlur=sblur;}
+// Safari fix: apply shadow to stroke (thin outline) not fill (full polygon) — eliminates software compositing per country
 gx.fillStyle=fill;gx.fill();
-gx.shadowBlur=0;gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();
+if(sblur>0){gx.shadowColor=scolor;gx.shadowBlur=sblur;}
+gx.strokeStyle=stroke;gx.lineWidth=sw;gx.stroke();
+gx.shadowBlur=0;
 // routeFrom highlight: one save/restore only for this special case
 if(id===routeFrom){gx.save();gx.shadowColor='rgba(255,220,0,1)';gx.shadowBlur=18;gx.strokeStyle='rgba(255,220,0,1)';gx.lineWidth=2.2;gx.stroke();gx.restore();}});
-if(showRts)drawRoutesAdvanced(t);drawParticles();if(journeyActive)drawJourneyRoutes();drawCountryIcons();const rim=gx.createRadialGradient(CX,CY,scl*.72,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(0.7,`rgba(0,120,200,${0.06+0.03*Math.sin(t/1200)})`);rim.addColorStop(1,`rgba(80,0,200,${0.1+0.04*Math.sin(t/900)})`);gx.save();gx.shadowColor='rgba(0,200,255,.5)';gx.shadowBlur=20;gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();gx.restore();drawHUDCorners();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle=`rgba(60,0,140,${0.04+0.02*Math.sin(t/300)})`;gx.fill();}}
+// Safari fix: rim uses the gradient's own opacity for the glow — no shadow needed on a full-sphere fill
+if(showRts)drawRoutesAdvanced(t);drawParticles();if(journeyActive)drawJourneyRoutes();drawCountryIcons();const rim=gx.createRadialGradient(CX,CY,scl*.72,CX,CY,scl);rim.addColorStop(0,'transparent');rim.addColorStop(0.7,`rgba(0,120,200,${0.06+0.03*Math.sin(t/1200)})`);rim.addColorStop(1,`rgba(80,0,200,${0.1+0.04*Math.sin(t/900)})`);gx.beginPath();pathGen(SPHERE);gx.fillStyle=rim;gx.fill();drawHUDCorners();if(routeMode){gx.beginPath();pathGen(SPHERE);gx.fillStyle=`rgba(60,0,140,${0.04+0.02*Math.sin(t/300)})`;gx.fill();}}
 function drawRoutesAdvanced(t){const dashOff=-(t/60)%20;S.routes.forEach(rt=>{const cached=getRouteLine(rt.from,rt.to);if(!cached)return;const{fc,tc,line}=cached;gx.save();gx.shadowColor='rgba(0,240,255,.7)';gx.shadowBlur=8;gx.beginPath();pathGen(line);const fp=proj(fc),tp=proj(tc);if(fp&&tp){const g=gx.createLinearGradient(fp[0],fp[1],tp[0],tp[1]);g.addColorStop(0,'rgba(255,0,200,.8)');g.addColorStop(.5,'rgba(140,80,255,.9)');g.addColorStop(1,'rgba(0,240,255,.8)');gx.strokeStyle=g;}else gx.strokeStyle='rgba(0,240,255,.8)';gx.lineWidth=1.4;gx.setLineDash([4,4]);gx.lineDashOffset=dashOff;gx.stroke();gx.setLineDash([]);[fc,tc].forEach(pt=>{const p=proj(pt);if(!p)return;if(d3.geoDistance(pt,[-rot[0],-rot[1]])>Math.PI/2)return;gx.save();gx.shadowColor='rgba(0,240,255,1)';gx.shadowBlur=14;gx.beginPath();gx.arc(p[0],p[1],3.5,0,Math.PI*2);gx.fillStyle='#00F0FF';gx.fill();gx.restore();});gx.restore();});}
 function drawHUDCorners(){const len=22,w=1.2;const x0=CX-scl,y0=CY-scl,x1=CX+scl,y1=CY+scl;gx.save();gx.shadowColor='rgba(0,240,255,.8)';gx.shadowBlur=6;gx.strokeStyle='rgba(0,240,255,.55)';gx.lineWidth=w;[[x0+3,y0+3,1,1],[x1-3,y0+3,-1,1],[x0+3,y1-3,1,-1],[x1-3,y1-3,-1,-1]].forEach(([cx2,cy2,sx,sy])=>{gx.beginPath();gx.moveTo(cx2,cy2);gx.lineTo(cx2+len*sx,cy2);gx.stroke();gx.beginPath();gx.moveTo(cx2,cy2);gx.lineTo(cx2,cy2+len*sy);gx.stroke();});gx.restore();}
 function lerpColor(a,b,t){const parse=h=>{const s=h.replace('#','');return[parseInt(s.slice(0,2),16),parseInt(s.slice(2,4),16),parseInt(s.slice(4,6),16)];};const[r1,g1,b1]=parse(a),[r2,g2,b2]=parse(b);return`rgb(${Math.round(r1+(r2-r1)*t)},${Math.round(g1+(g2-g1)*t)},${Math.round(b1+(b2-b1)*t)})`;}
@@ -1458,7 +1615,7 @@ document.getElementById('file-inp').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
-window.addEventListener('resize',()=>{sizeCanvas();journeyGlobeShift=0;updateProjectionLayout(true);initStars();syncZoomBar();if(tutActive)tutPlace();_jCanvasRectDirty=true;_jCardRectsDirty=true;});
+window.addEventListener('resize',()=>{sizeCanvas();journeyGlobeShift=0;updateProjectionLayout(true);initStars();syncZoomBar();if(tutActive)tutPlace();_jCanvasRectDirty=true;_jCardRectsDirty=true;_explorerGradKey='';_advOceanGradKey='';});
 initStars();
 loadWorld();
 </script>
